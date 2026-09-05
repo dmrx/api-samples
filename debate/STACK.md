@@ -20,7 +20,6 @@ Humans get server-rendered HTML; agents get MCP. Both call the same function.**
 | **One TypeScript service** | Plain exported functions, `(tx, actor, input)`, wired explicitly at one composition root. No DI container, no decorators, no ORM — the query in the file is the query that runs. Runtime: **Deno 2**, compiled to one binary, run with default-deny permissions (`--allow-net=db:5432,llm-endpoint`) so an agent-written service cannot reach anything the manifest doesn't name. |
 | **Server-rendered HTML + HTMX** | The human UI. The service renders HTML; the wire format is HTML; SSE for anything live. **Preact islands only where a widget is genuinely stateful** — a chat pane, a pipeline board. No SPA, no client state store, no second schema. |
 | **MCP** | The agent surface. `crm.search_customers`, `get_customer_context`, `create_opportunity`, `update_relationship`, `create_task`, `analyze_account`. Each tool is a registration of an existing domain function — `register()` takes a function reference, so a tool *cannot* carry its own logic. |
-| **Temporal** | Durable multi-week workflows with human steps: onboarding, renewal, escalation. Started by the domain function in the same transaction as the outbox row. |
 | **Kubernetes · GitHub · OpenTelemetry** | Fixed. |
 | **Model-agnostic LLMs · S3 · OIDC** | Fixed. |
 
