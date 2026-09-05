@@ -3,17 +3,19 @@
 Weights: reviewer 3, agent 3, simplicity 2, performance 2. Max 50 per round.
 Permissions held constant (Postgres column grants + RLS available to both).
 
-| | R1 case | R2 cross-exam | R3 design | **total /150** |
-|---|---|---|---|---|
-| **deno** | 33 | 34 | 43 | **110** |
-| go | 28 | 22 | 22 | **72** |
+Rounds 4-5 were run **unlocked**: each side could swap, drop or add any component.
 
-### By judge (raw sum across 3 rounds, max 15)
+| | R1 case | R2 cross-exam | R3 design | R4 unlocked | R5 iterate | **total /250** |
+|---|---|---|---|---|---|---|
+| **deno** | 33 | 34 | 43 | 38 | 38 | **186** |
+| go | 28 | 22 | 22 | **38** | 25 | **135** |
+
+### By judge (raw sum across 5 rounds, max 25)
 
 | | reviewer (3) | agent (3) | simplicity (2) | performance (2) |
 |---|---|---|---|---|
-| deno | **13** | **11** | **11** | 8 |
-| go | 5 | 9 | 6 | **9** |
+| deno | **20** | **20** | **18** | **15** |
+| go | 12 | 15 | 13 | 14 |
 
 ### Round 1 — the case with permissions neutralised
 | | reviewer | agent | simplicity | performance | weighted |
@@ -46,3 +48,30 @@ Permissions held constant (Postgres column grants + RLS available to both).
 4. **R3** — deno answered go's one real advantage (compiler-enforced uniformity) by making the
    schema generated and CI-diffed: drift becomes a red pipeline, not a lint warning. And it finally
    priced Zod (0.2ms/request), closing the dodge it had been marked down for twice.
+
+### Round 4 — unlocked redesign (**tie**)
+| | reviewer | agent | simplicity | performance | weighted |
+|---|---|---|---|---|---|
+| go | 4 | 4 | 4 | 3 | **38** |
+| deno | 3 | 5 | 3 | 4 | **38** |
+
+go dropped `html/template` for **templ** (compiled, type-checked views) and its bespoke generator
+for **sqlc** (types generated out of the Postgres schema). That fixed all four faults at once:
+`map[string]any` gone, one field-list copy with the compiler proving agreement, generation pointed
+the right way, silent empty renders now build errors. Its best round of the series.
+deno pushed validation into Postgres constraints, closed its raw-query bypass with a generated
+repository, added an `audit.grant_history` event trigger, and compiled to a binary: 95MB → 61MB.
+
+### Round 5 — cross-exam and final iteration
+| | reviewer | agent | simplicity | performance | weighted |
+|---|---|---|---|---|---|
+| go | 3 | 2 | 3 | 2 | **25** |
+| deno | 4 | 4 | 4 | 3 | **38** |
+
+The fix got priced. go disclosed **1,200 generated structs** (40 objects × ~6 roles × ~5 queries),
+regenerated in full on every weekly schema change — sqlc has no incremental mode — and conceded
+templ has a single maintainer and thin likely 2030 corpus coverage. deno found the one real RLS
+bypass nobody had named (`SECURITY DEFINER`, which runs as the table owner) and banned it in CI.
+
+**Both converged.** go adopted deno's constraint-as-source design in its final iteration. The two
+stacks now differ only in language, and in 15MB of RAM against 11ms of p99 and a tighter loop.

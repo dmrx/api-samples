@@ -1,101 +1,117 @@
 # The best stack for a 2030 CRM
 
-**Deno + plain TypeScript + HTMX + Postgres, with Postgres as the source of truth for schema,
-types and permissions alike.** Deno beat Go 110-72 across three rounds with the permission model
-held constant, so this is not the permissions argument again. It won because a CRM's schema comes
-from outside the application — Salesforce, through CDC — and everything should be generated in that
-direction. Go's best design generated Postgres grants *from* Go struct tags: backwards, and it took
-a 900-line bespoke generator to do it.
+**The architecture is the answer; the language is the smaller decision.** Go and Deno were unlocked
+and allowed to redesign freely against each other for two rounds. They converged on the same
+design. Deno wins the series 186-135, but by round 5 the two stacks differed only in language and
+in 15MB of RAM against 11ms of p99.
+
+**Recommendation: Deno + TypeScript.** Take the Go variant instead if memory is your binding
+constraint or if you cannot keep a CI gate green for a decade — both conditions are spelled out at
+the bottom, and neither is a fringe case.
 
 ---
 
-## The one rule everything else follows
+## The architecture — this part is not optional, in either language
 
-**Generation flows out of the database, never into it.**
+**Postgres owns the truth. Everything else is generated out of it.**
 
 ```
-Salesforce  →  CDC  →  Postgres  →  information_schema + grants  →  types, schemas, forms
-   (system of record)   (source of truth)          (generated, checked in, CI-diffed)
+Salesforce  →  CDC  →  Postgres  →  information_schema · pg_constraint · grants
+(system of                (source     ↓
+ record)                  of truth)   types · base validators · repository · form fields
+                                      (generated, checked in, CI-diffed every PR)
 ```
 
-Postgres holds the columns, the types, the column grants and the RLS policies. Everything the
-application knows about a record is generated from that and checked into the repo. CI regenerates
-on every PR and **fails the build on any diff.** That is the whole design; the rest is detail.
+Postgres holds four things, and it is the only thing that holds them:
 
-Why it matters: Salesforce admins add fields weekly. A stack whose types are hand-authored fights
-that every week. A stack whose types are derived from it absorbs it in one file.
+| what | how | why here |
+|---|---|---|
+| **Columns and types** | the schema, mirrored by CDC | Salesforce adds fields weekly; a hand-authored type fights that every week |
+| **Permissions** | column `GRANT` + `FORCE ROW LEVEL SECURITY` | one declaration site instead of a rule repeated across 120 screens |
+| **Validation — the easy half** | domains, `CHECK` constraints, generated columns | required/type/format cannot then drift from what the database will actually accept |
+| **Grant history** | an event trigger writing DDL and grant changes to `audit.grant_history` | the only way to answer "who could see this field, and since when" |
+
+What stays hand-written, in either language: **cross-field rules, conditional visibility, and
+drafts.** Drafts have to bypass constraints by design — a partial row must save — so the
+application genuinely owns that logic. Both sides tried to claim otherwise and both conceded.
+
+**Never generate SQL schema or grants from application code.** Go lost round 3 with a 900-line
+generator emitting `GRANT` DDL from struct tags: generation pointed against the direction the data
+actually flows.
 
 ---
 
 ## The stack
 
-| layer | choice | why |
-|---|---|---|
-| Runtime | **Deno** | Native TypeScript, no build step, `deno.lock` vendors deps, permission flags mirror RLS's least-privilege posture. Bun is faster to boot; its looser sandbox isn't worth it here. |
-| HTTP | `Deno.serve` | Stdlib. No framework, no router DSL, no middleware chain to trace. |
-| Templating | HTMX partials, tagged-template escaping | Server renders HTML; the wire format is HTML. No client router. |
-| DB access | `postgres.js`, raw SQL | No ORM. The query in the file is the query that runs. |
-| Types | generated `db.d.ts` from `information_schema` | ~1,400 lines, imported not read, diffable in a PR. |
-| Forms/validation | generated base Zod schema + hand-written `.refine()` | ~220 lines/form × 40 = 8,800. One declaration is the row type, the form model and the validator. |
-| Client | HTMX + Preact islands for stateful widgets only | Islands are the exception, not the pattern. |
-| **Permissions** | **Postgres column `GRANT` + `FORCE ROW LEVEL SECURITY`** | One declaration site. Screens hold no rule at all — they `SELECT *` and the grant decides. |
-| Session context | one explicit transaction per request, `SET LOCAL app.user_id` | Survives pgbouncer transaction pooling. No query outside a transaction, enforced at the pool client. |
-| Migrations | Atlas, diffing `information_schema` | Generated SQL, reviewed like any PR. |
-| Tests | `Deno.test` + one golden-file HTML diff per screen | Diffs grouped by changed file, so one shared-partial change is one diff block, not 120. |
+| layer | choice |
+|---|---|
+| Runtime | **Deno**, `deno compile` to a static binary per pod |
+| HTTP | `Deno.serve` — stdlib, no framework, no router DSL |
+| DB access | a **generated typed repository** over `postgres.js` — the only door; a lint rule bans raw clients and `any` outside it |
+| Types | `db.d.ts` generated from `information_schema` |
+| Validation | base Zod schema generated from `pg_constraint`, as an explicit reviewed catalog; hand-written `.refine()` for cross-field, conditional and draft logic only |
+| Templating | HTMX partials, tagged-template escaping |
+| Client | HTMX; Preact islands only for genuinely stateful widgets, client-bundled, out of the server process |
+| Permissions | column `GRANT` + `FORCE ROW LEVEL SECURITY`, one explicit transaction per request, `SET LOCAL app.user_id` |
+| Migrations | Atlas, diffing `information_schema`, reviewed like any PR |
+| Tests | `Deno.test` + one golden-file HTML diff per screen, diffs grouped by changed file |
 
-**Numbers:** 26,400 hand-written lines, ~3,000 generated, 7 concepts. 0s build, 0.4s tests.
-p99 38ms on a 5M-row filtered list (k6, indexed RLS), 95MB RSS/pod, 40ms cold start. Live GROUP BY
-640ms. Zod on a 60-field form: 0.2ms CPU/request, ~2% of p50.
+**Numbers:** 24,850 hand-written, 4,300 generated, 8 concepts. Build 2.4s, incremental 0.3s, tests
+0.4s. p99 34ms on a 5M-row filtered list, 61MB RSS/pod, 25ms cold start.
 
 ---
 
-## The five things to build before the first screen
+## The five gates — build these before the first screen
 
-Every contender in this series conceded these are missing, and every one of them fails **open**.
-None of them is the CRM; all of them are why the CRM doesn't leak.
+Every one of them fails **open**. None is the CRM; all are why the CRM doesn't leak.
 
-1. **The grants CI check.** One query diffing `information_schema.column_privileges` against a
-   checked-in expected-grants file. ~40 lines. It covers all 120 screens at once, and it is the
-   only thing that would have caught the round-4 breach — a `GRANT SELECT ON opportunity TO partner`
-   missing its column list is syntactically normal SQL that no linter flags.
-2. **The DDL-history trigger.** Log every grant and policy change with a timestamp. Without it you
-   can revert a breach in seconds and still not tell a regulator who saw the field or since when.
-   This is the incumbent's one genuine win in the whole series — Envers could answer that question
-   and nothing else could.
-3. **A read-audit table for sensitive columns.** Narrow: a handful of fields, not everything.
-   Enough to answer "which partners read `discount`, and when".
-4. **The repository layer plus a lint rule banning raw `db.query` outside it.** ~12 files. This
-   closes Deno's own worst flaw, which it named itself: `any` and raw queries let an agent bypass
-   `.parse()`, and three report paths already do.
-5. **The schema-drift gate.** CI regenerates `db.d.ts` and the base Zod schemas from
-   `information_schema` and fails on any diff from what's checked in. This is what replaces Go's
-   compiler-enforced uniformity: divergence becomes a red pipeline instead of a lint warning a
-   reviewer can wave through.
+1. **Grants CI check.** Diff `information_schema.column_privileges` against a checked-in
+   expected-grants file. ~40 lines, covers all 120 screens at once. `GRANT SELECT ON opportunity TO
+   partner` missing its column list is normal-looking SQL that no linter flags — this is the only
+   thing that catches it.
+2. **Schema-drift gate.** Regenerate types, base validators and the repository from Postgres on
+   every PR; fail the build on any diff from what's checked in. This is what replaces a compiler:
+   drift becomes a red pipeline, not a lint warning someone waves through.
+3. **`audit.grant_history` event trigger.** Log every DDL and grant change with actor and
+   timestamp. Without it you can revert a breach in seconds and still not say who saw the field.
+4. **Repository layer + lint ban on raw access, and a CI ban on `SECURITY DEFINER`.** RLS holds
+   against anything the app role does — the one genuine escape is a `SECURITY DEFINER` function
+   running as the table owner. Ban it in CI; it is the only real bypass in the design.
+5. **A narrow read-audit table for sensitive columns.** A handful of fields, not everything —
+   enough to answer which partners read `discount`, and when.
 
 ---
 
-## What was taken from Go, and what was left
+## The Go variant — when to take it instead
 
-**Taken:** the insistence that uniformity be *enforced*, not conventional. Deno's answer is
-generation plus a CI diff gate rather than a compiler, and that is a fair substitute — a red
-pipeline is not a suggestion. Also taken: golden-file HTML diffs as the human review gate, and
-`html/template`'s discipline of rendering on the server and shipping HTML on the wire.
+Same architecture, different language, and it is genuinely close: **sqlc** generates Go types out of
+the Postgres schema and constraints, **templ** compiles views to type-checked Go so a renamed column
+is a build error, permissions stay in migrations, `net/http` + chi, golden-file diffs. 23,200
+hand-written, 4,400 generated, 8 concepts, build 3.4s / 0.5s incremental, p99 45ms, **46MB RSS**.
 
-**Left:** Go's 44MB RSS against Deno's 95MB — a real 2.2x, and the one number where Go simply wins.
-At 120 screens across many pods that is a genuine hosting cost, and it is the honest price of this
-choice. Left too: Go's uniformity being a property of the language rather than a pipeline someone
-has to keep green. If your organisation cannot keep a CI gate green for a decade, Go's argument
-gets stronger and this recommendation gets weaker.
+**Take it if:**
+- **Memory is your binding constraint.** 46MB against 61MB per pod, across many pods, is real money.
+- **You cannot rely on a CI gate staying green for ten years.** Go's uniformity is a property of the
+  compiler; Deno's is a pipeline a person has to maintain. If that pipeline rots, Go degrades
+  gracefully and Deno does not.
+- **You want the strongest correctness guarantee available.** templ's compile-time proof that a
+  renamed column breaks every view is stronger than any CI diff.
+
+**Its price, disclosed by Go itself:** 1,200 generated structs — 40 objects × ~6 roles × ~5 queries
+— regenerated in full on every weekly schema change, because sqlc has no incremental mode. That is a
+large, recurring, unreadable diff on the exact PR a human most needs to read. And templ has a single
+maintainer and thin likely 2030 corpus coverage — mitigated, not solved, by the fact that it
+compiles to plain Go, so an abandoned templ still leaves working code.
 
 ---
 
-## What this stack is still worse at
+## What this design is still worse at
 
-- **The escape hatch.** An agent can write `any` and a raw query and skip validation. The
-  repository layer and lint rule catch it at review, not at compile. Go makes it structurally
-  harder to do by accident.
-- **Memory.** 95MB/pod against Go's 44MB.
-- **Runtime age.** Deno is younger than Go's toolchain, and "will it build in 2031" is a fair
-  worry. `deno.lock` plus vendored dependencies is the mitigation, not a guarantee.
-- **Reports.** Three read paths skip Zod for speed. That is a deliberate, bounded exception and it
-  should stay bounded — write it down, and check the boundary in CI.
+- **Two places validation can be wrong.** The CHECK rule exists in Postgres and again in the
+  generated Zod mirror. Generated from one source and CI-diffed, but duplicated all the same.
+- **Drafts are app-owned.** They must bypass DB constraints, so Zod is the source there, not Postgres.
+- **Memory.** 61MB/pod against Go's 46MB.
+- **Runtime age.** Deno is younger than Go's toolchain. `deno.lock` plus vendored dependencies is a
+  mitigation, not a guarantee.
+- **Nobody named a measurement tool for the final latency numbers.** Treat every figure here as an
+  estimate to be re-measured on your own hardware before it decides anything.
