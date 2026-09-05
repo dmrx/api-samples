@@ -1,11 +1,14 @@
-# Stack debate — a stack for agentic development, 2030+
+# Stack debate — a stack for building a CRM with agents, 2030+
 
-**Question:** what do you standardize on for a decade of agent-written code, when the scarce
-resource is human review? Judged on simplicity, performance, and human reviewability. Magic
-(action at a distance) and sprawl (repos, layers, languages, deps) are direct penalties.
+**Question:** what do you standardize on to build and run a whole CRM for a decade, when agents
+write almost all the code and the scarce resource is human review?
 
-Test workload (the probe, not the subject): quotes screen — list, live status over SSE,
-Salesforce → CDC → Postgres, on ROSA.
+Workload: ~40 objects, ~120 screens, 30-80-field forms, field- and row-level permissions, weekly
+schema drift from Salesforce via CDC into Postgres, reporting, audit. On ROSA.
+
+**The CRM tension:** 120 screens of near-identical CRUD is exactly where abstraction earns its
+keep — and exactly where abstraction becomes the magic this debate penalises. Hand-write and be
+honest but enormous; generate and be small but unreadable. Every contender must pick a side.
 
 Contenders: incumbent (Angular MFE + Node BFF + Java Spring), go, rust, deno.
 Judges: reviewer (3), agent (3), simplicity (2), performance (2). Max 50 per round.
@@ -15,116 +18,82 @@ Judges: reviewer (3), agent (3), simplicity (2), performance (2). Max 50 per rou
 ## Round 1 — Opening (80 words each)
 
 **incumbent**
-Standardize on Angular+MFE, Node BFF, Java Spring. Yes it's heavy — that's the point: at decade scale you need one prescribed shape, not four thousand snowflakes. Angular CLI/ESLint reject bad code at compile time, not review time. Spring Boot's conventions are the most-represented enterprise pattern in every model's training data — agents write idiomatic Spring correctly more often than novel stacks. JVM: predictable GC, 40K req/s per pod, decades of profilers. Uniformity beats novelty when nobody remembers why.
+120 identical screens is a solved problem: one FormGroup builder reads field metadata, renders all 120 — Angular Reactive Forms plus CDK Table, not 120 handwritten files. Every rule lives once: `@PreAuthorize("hasPermission(#account,'discount')")` on the repository method, enforced server-side, auditable by grepping one annotation across 40 services. Hibernate Envers gives audit for free — no hand-rolled trigger per table. Spring Data derived queries mean the query IS the method signature. Concentrated, reviewable magic: earned at 120, indefensible at 1.
 
 **go**
-Go compiles agent code in 2 seconds, errors point to exact file:line, and there's exactly one idiomatic way to write an HTTP handler — no framework, no DI, no build step for the server. `net/http` + `html/template` are stdlib: ten agents given the same ticket write near-identical diffs, because the language forecloses alternatives. Preact/htm islands add zero bundler — script tags, no JSX transform. Static binary, 15MB RSS per pod, sub-ms p50, cold start under 50ms. Nothing to configure, nothing hidden.
+Hand-write all 120. Codegen from schema hides the one thing review must catch: the permission check on this field, this row, this screen. A generator that's right 118 times and wrong twice ships a breach silently. Hand-written screens are boring, greppable, diffable — `grep field_perm *.go` audits everything in one command. Pay with volume, not trust: 120 files beats one clever template nobody fully reads.
 
 **rust**
-The compiler is the reviewer's proxy: `Option<T>`, exhaustive `match`, and lifetimes reject null derefs, unhandled states, and use-after-free before a human opens the diff. Axum handlers are typed functions, not middleware chains. Askama templates fail the build on a typo'd field — no runtime surprise. 8ms p99, 15MB RSS per pod, zero GC pauses. Cost: macros (`#[derive]`, `askama::Template`) hide codegen, and rustc's 45s incremental build slows the agent's edit-compile-test loop versus Go's 2s.
+Rust wins on the exact axis this CRM lives or dies on: field-level permissions and schema drift. Encode permission as type — an unreadable field literally isn't reachable — and sqlx makes a dropped column a compile error, not a support ticket. Node ships fast today and rots weekly; Django's admin is nice until 40 objects of row-level rules outgrow it. Yes, 40 objects means real derive-macro bulk and 51s+ builds — that's the price of a decade of agents never silently breaking permissions.
 
 **deno**
-Zero build step: the diff is the binary. No webpack, no tsc emit, no source maps to trust — `deno run server.ts` executes the exact bytes reviewed. Angular MFE needs Module Federation manifests plus Java services humans can't trace in one pass; Rust/Go need a compile step between diff and behavior. Deno: built-in fmt/lint/test, npm compat, single 90MB binary, sub-20ms cold start. One language, server and islands both TypeScript — zero context-switch tax for the agent or the reviewer.
+TypeScript once, everywhere: a record's shape is a type, used server-side, in the form, in the validator — no schema translation layer, no DTO drift. Postgres, HTMX, zero build step: the diff you read is the code that runs. My weak spot, named straight: 120 hand-written screens leaning on a lint rule is fragile — last round I dodged that; this round I own it and let the judges price it.
 
 ### Round 1 scores (weighted /50)
-go 46 · deno 35 · rust 33 · incumbent 15
+go 40 · rust 34 · deno 27 · incumbent 24
 
-Judge notes: reviewer put go top — nothing to expand, no codegen between diff and binary — and
-gutted incumbent for Module Federation wiring and Spring DI. agent's decisive criterion was
-**idiom uniformity**: go 5 (the language forecloses alternatives), deno 3 (no-framework TS
-invites ten different architectures). simplicity gave deno the only 5 (one language, zero build
-step). performance was hostile to everyone: no contender sourced a number, deno gave almost none,
-and rust's "15MB RSS" identical to go's read as a copy.
+Judge notes: the CRM frame changed the shape immediately. incumbent nearly doubled its old
+opening score — reviewer accepted that concentrated `@PreAuthorize` is genuinely auditable across
+40 files. deno fell to 2 with reviewer: at 120 screens, "a lint rule holds the line" is the weakest
+possible answer on a permission breach. go took reviewer and agent on the same argument — an
+inline, greppable check on every screen, and agents don't mind writing 120 files. performance
+failed everyone: nobody gave a single runtime number for a list over millions of rows.
 
 ---
 
-## Round 2 — Show the whole thing a human must review
+## Round 2 — Price the whole CRM
 
 **incumbent**
-```
-angular-mfe/quotes/quotes.component.ts    node-bff/routes/quotes.ts
-angular-mfe/quotes/quotes.service.ts      node-bff/sse/quotes-stream.ts
-angular-mfe/webpack.config.js             spring-svc/QuotesController.java
-spring-svc/QuotesService.java             spring-svc/QuoteEntity.java
-spring-svc/QuoteRepository.java           spring-svc/application.yml
-debezium/salesforce-quotes.json
-```
-Data path: SFDC field edit → Debezium CDC → Kafka → Postgres row → JPA repo polls → Spring service/controller → Node BFF SSE proxy → Angular HttpClient/EventSource → RxJS Observable → zone.js change detection → template renders.
+**120-screen number:** ~9,600 lines total. Each screen: one 60-line JSON metadata file (fields, validators, roles) — agent-written, hand-reviewed. Shared form/table builder that reads it: 1,400 lines of Angular Reactive Forms + CDK Table, written once, read once, never touched per screen. The builder is real magic — earned because 120 near-identical CRUD screens is exactly the case that pays for it.
 
-**Concepts, 15:** Salesforce CDC config, Kafka, Debezium JSON, Postgres, JPA/Hibernate, Spring DI annotations, Spring Boot autoconfig, Java, SSE proxying, Node/Express, TypeScript, Angular DI, RxJS, Module Federation webpack, zone.js.
+**Permissions:** field-level rule lives in the screen's JSON (`"discount":{"read":["Sales"]}`), enforced identically server-side by `@PreAuthorize` on `AccountService.getDiscount` — one method, not 120. Row-level: Postgres RLS on `owner_id`, mirrored from Salesforce CDC. Audit: `grep -rn '"discount"' screens/**/*.json | xargs grep -n PreAuthorize services/*.java`
 
-**Lines:** ~520 hand-written across 11 files. Trusted unread: ~350 lines of Spring autoconfig, Angular CLI schematic boilerplate, MF remoteEntry runtime glue.
+**Schema drift:** Debezium mirrors `Account.tier` automatically. Human adds 1 Flyway migration, 1 JPA field, 1-3 screen JSON entries. Forgotten migration fails deploy loudly. Forgotten JSON entry = field invisible — safe, default-deny, caught on QA checklist, not silent exposure.
 
-**Loop:** cold build 95s (ng build + mvn package), incremental 18s, save-to-red: Java names the exact line; Angular template typos surface at runtime, not compile time. Concession, not parity with Go.
-
-**Perf:** retracting 40K req/s, it was unsourced. Honest, warmed JVM, TechEmpower-class JSON: p50 8ms, p99 45ms, RSS 320MB/pod, cold start 3.2s. That cold start is 60x Go's — the real cost of this stack.
+**Numbers** (k6 @200 concurrent, 5M rows, indexed filter): Account list p50 45ms, p99 190ms. Java pod 900Mi RSS, Node BFF pod 480Mi. Cold start: Spring Boot 4.1s, BFF 750ms. Ad-hoc `SUM(amount) GROUP BY owner` off a CDC-refreshed materialized view: p99 260ms.
 
 **go**
-```
-cmd/server/main.go              internal/quotes/handler.go
-internal/quotes/sse.go          internal/cdc/consumer.go
-web/templates/quotes.html       web/islands/quote-status.js
-db/migrations/0007_quotes.sql
-```
-Data path: Salesforce → Debezium CDC → Kafka topic → consumer.go upserts Postgres row → Postgres `NOTIFY` → handler.go's `LISTEN` goroutine → SSE write → browser `EventSource` → htmx sse-swap replaces the row; Preact island re-renders one status badge off the same JSON.
+**The number:** 120 screens × ~550 lines (handler + template + field-perm checks + island + table test) = **66,000 lines. Real, ugly, ours. Pay it.**
 
-**Concepts (9):** Go, SQL, html/template syntax, net/http routing, Postgres LISTEN/NOTIFY, Debezium/Kafka semantics, HTMX attributes + SSE extension, EventSource, Preact/htm — honestly a second language and a second rendering model, no way around it.
+**Permissions:** field rule lives once in `internal/perm/rules.go`, called per-field in every template: `fieldPerm(user,"Opportunity.discount")`. Row rule lives in each query's `WHERE owner_id = ANY(visible_ids(user))`. Audit: `grep -rn 'fieldPerm(.*"discount"' ./screens | wc -l` — one line, all 120 files, two seconds, no service to trust.
 
-**Lines:** ~340 across 7 files, all human-authored. Generated/wired code to trust: **0** — no DI, no codegen; 12 lines of explicit route registration in main.go, readable whole.
+**Schema drift:** `Account.tier` lands Monday. Touch: CDC mapper (1), Go struct (1), then every screen rendering Account — ~18 files. Go's compiler catches every struct misuse instantly — loud. **html/template does not: `{{.Tier}}` on a missing field prints empty string silently, in production, permission check included, until a human notices. Honest answer: yes, it can break silently — no compiler link from SQL to template.**
 
-**Loop:** cold build 1.8s, incremental 0.3s, save-to-red 0.9s (`go test ./quotes/...`).
-
-**Perf**, quotes-list endpoint, `wrk -t4 -c200 -d30s`, 2 vCPU/2GB pod: p50 0.9ms, p99 6ms, RSS 19MB steady state, cold start 45ms container-start-to-first-200.
+**Numbers** (k6, Postgres 15, 5M rows, indexed filter): p50 9ms / p99 52ms. Unindexed ad-hoc GROUP BY: 1.9s. RSS/pod 42MB. Cold start 70ms.
 
 **rust**
-```
-crates/api/src/models/quote.rs      (26 ln)
-crates/api/src/routes/quotes.rs     (42 ln)
-crates/api/src/sse.rs               (38 ln)
-crates/api/src/cdc/quote_sync.rs    (51 ln)
-crates/api/templates/quotes.html    (34 ln)
-migrations/003_quotes.sql           (12 ln)
-```
-Data path: Salesforce → Debezium/Kafka → `quote_sync.rs` upserts Postgres `quotes` → trigger `NOTIFY quote_changed` → `sse.rs` LISTEN loop → `tokio::broadcast` → Axum SSE handler → browser, HTMX swaps `<tr id=quote-N>`.
+**120-screen number:** ~42,000 hand-written lines (120 × ~350: handler + Askama template + sqlx query + test). **`cargo expand` on 40 objects' derives: ~180,000 generated lines.** That's real, unread-by-humans code — I said it hurts, it does.
 
-**Concepts (13, counted straight):** ownership/borrow checker, async/tokio runtime, traits, 4 derive macros (Serialize, Deserialize, FromRow, Template), Result/Option + `?`, Axum extractors, sqlx query macro, Askama syntax, LISTEN/NOTIFY, broadcast channel, HTMX attrs. **Lifetimes: zero explicit annotations in this diff** — all elided. Reviewer's macro objection stands but the scope is narrow: 4 macros, single crate, no runtime codegen.
+**Permissions:** not a newtype — a struct per role per object: `AccountAsAdmin`, `AccountAsRep`, `AccountAsReadOnly`, each holding only the fields that role selects. 40 objects × 3 roles = **120 structs, ~1,800 lines just for view shapes.** The combinatorics are real and it's the honest price: reviewable one struct at a time, not one flag scattered across 120 screens.
 
-**Lines:** 203 hand-written. `cargo expand` on these 5 files: **2,180 generated lines** — untrusted-but-mechanical serde/sqlx impls.
+**Schema drift — `Account.tier`:** migration, `Account` struct, whichever role-struct gets the field, template partial, list-column config — 5 files. sqlx catches every stale `SELECT` at compile time. **It does NOT catch forgetting to add `tier` to `AccountAsRep` — that compiles clean, just silently invisible to reps.**
 
-**Loop:** cold build 51s, incremental 9s (sccache), save-to-red 13s — real `cargo run`, no check-only cheat.
-
-**Perf** (3 pods, k6 500rps): p50 4ms, p99 11ms, RSS 24MB/pod (tokio scheduler overhead, not go's number), cold start 90ms incl. pool warmup.
+**Numbers** (k6, 200rps, 5M rows, indexed): p50 8ms, p99 40ms. 45MB RSS/pod. Cold start 230ms. Ad-hoc GROUP BY 900ms. **Build, 40-object crate: 4m10s cold, 38s incremental.**
 
 **deno**
+**26,400 lines, whole CRM.** 40 object files @120 = 4,800. 120 screens (form + list + handler) @180 avg = 21,600. 100% hand-written, **0 generated.**
+
+**Permissions live in Postgres, not code.** Field-level: column privileges — `REVOKE/GRANT SELECT (discount) ON opportunity TO role` in schema.sql, once. Row-level: RLS policy — `CREATE POLICY ON account USING (owner_id = current_setting('app.user_id'))`, set per request via `SET LOCAL`. Screens just `SELECT *`; the grant decides what comes back. Audit command, works at 120 screens or 1,200:
+```sql
+SELECT grantee FROM information_schema.column_privileges
+WHERE table_name='opportunity' AND column_name='discount';
 ```
-routes/quotes.ts       (SSE handler, 55 ln)
-routes/quotes_list.ts  (HTMX partial, 30 ln)
-db/cdc_listener.ts     (LISTEN/NOTIFY, 35 ln)
-db/quotes.sql          (view + trigger, 20 ln)
-public/quotes.html     (table + hx-sse, 45 ln)
-deno.json              (lint/fmt config, 10 ln)
-```
-Data path: Salesforce → Debezium CDC → Postgres `quotes` table → `AFTER UPDATE` trigger fires `pg_notify('quotes_change', row)` → `cdc_listener.ts` holds one `LISTEN`, fans out to per-connection queues → `quotes.ts` writes `event: quote\ndata:{...}` → browser `hx-ext="sse"` swaps the `<tr>`. No queue, no broker, one hop each side.
+**One query, one source of truth — nothing to grep across screens, because screens never hold the rule.**
 
-**Concepts:** Deno perms, tagged-SQL client, LISTEN/NOTIFY, SSE wire format, HTMX sse-swap, trigger syntax, deno.json lint rule. **7.**
+**Schema drift — `Account.tier`, Monday.** CDC ALTERs Postgres; `db.d.ts` (checked in, generated from `information_schema`) updates — 1 file. Generic `SELECT *` + HTMX list/detail screens show tier immediately, zero edits. A form's explicit zod insert schema without `tier` fails loudly — named field, named file. Unmentioned fields just don't render.
 
-**Lines:** 195 total, **0 generated/trusted** — no build output exists.
-
-**Loop:** cold 0s (no build), incremental 0s, save-to-red 0.4s (`deno test --watch`).
-
-**Perf:** p50 4ms, p99 11ms, RSS 40MB/pod, cold start 70ms. V8 GC: young-gen scavenge adds 3-8ms p99 jitter under load — real, unlike Go/Rust.
-
-**Divergence answer:** `deno.json` bans classes and decorators via lint; one golden-path file per pattern, copied not reinvented; agents grep it before writing.
+**Numbers** (5M-row Account, filtered indexed list, autocannon @300 conns): p50 9ms, p99 38ms. Ad-hoc GROUP BY, Postgres-side: p50 640ms — JS never touches raw rows, heap flat, GC pause <2ms. Memory/pod 58MB idle, 95MB loaded. Cold start 40ms.
 
 ### Round 2 scores (weighted /50)
-go 45 · deno 45 (tie) · rust 23 · incumbent 14 — running: go 91, deno 80, rust 56, incumbent 29
+deno 48 · incumbent 28 · go 27 · rust 21 — running: deno 75, go 67, rust 55, incumbent 52
 
-Judge notes: rust lost the round by telling the truth — `cargo expand` says 2,180 generated lines
-behind 203 hand-written ones, and simplicity caught it omitting Kafka from its own concept count.
-deno won reviewer and simplicity outright: 195 lines, 0 generated, 7 concepts, **and the only
-data path with no broker in it**. go won agent and performance: 0.9s save-to-red, and the only
-numbers whose named load matched the claim. incumbent retracted its own 40K req/s and disclosed a
-3.2s cold start.
+Judge notes: deno took 48 of 50 and the lead, on one idea — **move permissions out of code and into
+Postgres**: column privileges and RLS, declared once, audited by a single SQL query, and screens
+never hold the rule at all. go's hand-write-everything stance collapsed under its own numbers:
+66,000 lines, drift touching 18 files, and a template that renders a missing field as empty string
+in production with the permission check included. rust posted the worst reviewer score of the
+series — 42,000 hand-written plus 180,000 generated lines, 120 role-structs, and a 4m10s cold build.
+incumbent's metadata-driven builder held up better than expected and it out-scored go this round.
 
 ---
 
@@ -133,144 +102,155 @@ numbers whose named load matched the claim. incumbent retracted its own 40K req/
 ### Pass 1 — questions
 
 **incumbent asks**
-- go: Two rendering models — server templates plus Preact islands — for one screen: which is the idiomatic default an agent picks in year 6?
-- rust: `cargo expand` reveals 2,180 generated lines behind your 203 hand-written — which macro output does the reviewer trust unread?
-- deno: Each pod runs its own LISTEN — with N replicas, how do you dedupe N-way NOTIFY fanout without the broker you said you don't need?
+- go: With RLS on owner_id, how does a report joining 5 tables at 5M rows each avoid a per-row policy check tanking p99?
+- rust: Your role-structs decode DB rows directly — does sqlx's compile-time check even see RLS-filtered columns, or just the raw schema?
+- deno: `SET LOCAL app.user_id` per request — on a pooled connection, one leaked/reused session leaks another user's rows. Proof it can't happen?
 
 **go asks**
-- incumbent: Your 3.2s cold start is 60x mine — in a decade of constant redeploys, who pays that tax every pod cycle?
-- rust: You trust 2,180 cargo-expand lines nobody reads and still eat a 45s incremental loop — which gives first, review or agent speed?
-- deno: Your only defence against sprawl is a lint rule, not the compiler, and V8 GC adds 3-8ms jitter — which breaks first at scale?
+- incumbent: Hibernate Envers doubles storage on every write — after a decade at 5M rows per object, what's your audit table's size and restore time?
+- rust: 120 role-structs for 40 objects — when Salesforce adds a field, how many structs must agents touch before a human can review it all?
+- deno: Under pgbouncer transaction pooling, `SET LOCAL app.user_id` doesn't survive to the next query — how do you guarantee RLS isolation across pooled connections?
 
 **rust asks**
-- incumbent: Spring autoconfig trusts 350 unread lines and a 3.2s cold start — which decade-eight bug hides in that trusted zone?
-- go: With zero DI and no macros, what actually stops a wrong-but-compiling handler from shipping besides a human catching it in review?
-- deno: With 0 generated lines and no compiler backstop, what catches a wrong-but-compiling TS change in year eight before it hits prod?
+- incumbent: Your `@PreAuthorize` is an annotation string — what compiler error fires when a new service method ships with none at all?
+- go: `fieldPerm()` is a function call a template author can just skip — what build step fails when they do?
+- deno: Your grant lives in schema.sql — what stops a raw query on a service-role connection from bypassing RLS entirely, undetected?
 
 **deno asks**
-- incumbent: Kafka feeds a second broker, your Node BFF, behind a 95-second build — what does either layer do that Postgres NOTIFY doesn't?
-- go: Your CDC still runs through a Kafka consumer, and every diff needs a compile step ours skips — what's the payoff?
-- rust: `cargo expand` turns your 203 lines into 2,180 generated ones — isn't that the exact build-step-you-don't-read this debate penalises?
+- incumbent: When a role's access to one field changes, how many of 120 screen-JSON files must a human touch, and who catches a missed one?
+- go: Nothing stops a screen skipping `fieldPerm()` on a new field — what fails when an agent forgets one of 120 calls?
+- rust: Forgetting to add a field to `AccountAsRep` compiles clean and hides it silently — across 120 role-structs, what alarm ever fires?
 
 ### Pass 1 — answers, and pass 2 questions
 
 **incumbent answers**
-- to go: Every pod, every autoscale and rolling deploy — 3.2s × N pods × daily redeploys is a real latency tax nobody chose.
-- to rust: A silently-overridden autoconfig bean nobody diffs — wrong bean wins, prod breaks in year eight, no line of code to blame.
-- to deno: Kafka buys replay and multi-consumer durability NOTIFY lacks — but our Node BFF adds none of that, it's pure unearned latency. Fair hit.
+- to go: Envers audit hits ~20GB vs 5GB live data at 5M rows/decade (4 revisions/row); restoring one object's full history takes 25 minutes.
+- to rust: None — `@PreAuthorize` is a string, invisible to javac; one ArchUnit CI rule across 40 services catches a missing one, not the compiler.
+- to deno: A changed field touches ~14 of 120 screen-JSONs; **a missed one is caught only by QA, not CI.**
 
 **go answers**
-- to incumbent: html/template is the default; the Preact island fires only for the one stateful status badge — agents never choose, it's fixed.
-- to rust: Nothing but table-driven handler tests plus review — no DI, no macros, so an untested wrong-but-compiling handler ships.
-- to deno: Payoff is the ordering/replay guarantee Salesforce's CDC needs across consumers; the 2s compile buys named-line errors and 0.9s save-to-red.
+- to incumbent: Reports use indexed `owner_id` plus a materialized `visible_ids(user)` view, not per-row RLS — joins filter via index, p99 ~150ms at 5M rows each.
+- to rust: **Straight answer: nothing at build time** — html/template compiles regardless; only a written per-field test catches a skipped `fieldPerm()`, else it ships silent.
+- to deno: **Same straight answer: no compiler or lint stops it** — only an existing test for that field catches the skip, otherwise it's silent until audit.
 
 **rust answers**
-- to incumbent: Every derived line maps 1:1 to a struct field the reviewer already read — Spring wires beans from classpath scanning, not the diff.
-- to go: Neither — derive output is 100% determined by the struct, so review time spent on it is zero regardless of the 45s build.
-- to deno: The derive line is the full spec; expand is a deterministic proof, not a hidden runtime decision.
+- to incumbent: sqlx checks raw schema only, via information_schema — RLS filters rows at runtime, invisible to compile time by design.
+- to go: Only the structs granting that field — typically 1-3 of 120, since one object touches just its own role-structs.
+- to deno: No compiler alarm — **but it fails closed: a rep can't see tier. Unlike go's skipped check, which fails open and exposes data.**
 
 **deno answers**
-- to incumbent: NOTIFY payload is capped ~8KB, so we fan out row IDs, not full quotes. *(Did not answer the N-replica dedupe.)*
-- to go: Convention is one lint rule away from missing; ours is CI-enforced (`deno lint --check`) plus one golden file — jitter loses first, GC pauses don't compound across replicas.
-- to rust: Same backstop your derive macros lack: exhaustive integration tests plus `deno check` catching type-shape drift at PR time, not runtime.
+- to incumbent: 5-table join at 5M rows each: the RLS predicate is pushed into the plan and indexed on `owner_id`, so it's an index condition, not a per-row check — roughly the same p99 as an unindexed join+filter.
+- to go: Every query runs inside one explicit `BEGIN…COMMIT` wrapping the request; pgbouncer transaction mode scopes that transaction to one backend, so `SET LOCAL` holds for every statement in it. **The danger is a stray query outside that transaction, which I disallow at the pool-client level.**
+- to rust: The migration role owns schema.sql; the app role is `FORCE ROW LEVEL SECURITY` with no `BYPASSRLS`, so a raw query on it still filters. **Only a superuser/service-role connection could skip it, and none is issued to app code.**
 
 ### Pass 2 — questions
 
 **incumbent asks**
-- go: Your LISTEN goroutine holds one Postgres connection per pod — at 50 pods that's 50 idle listeners; does that scale to year ten?
-- rust: Strip sccache — fresh CI, a clean agent sandbox — and every incremental build is your 51s cold build; who absorbs that every day?
-- deno: No compiler, no exhaustiveness checks — what stops a renamed field from silently reaching prod in year eight of agent-written TypeScript?
+- go: Over a decade, html/template's silent empty-string on missing fields — how many real permission leaks did you catch before a customer did?
+- rust: Add a 41st role like Partner: 40 new role-structs, ~600 lines — how many days of agent-plus-human review before it ships safely?
+- deno: GRANT/RLS state is a snapshot with no history table — how do you prove what "discount" access looked like on any past date?
 
 **go asks**
-- incumbent: Autoconfig trust grows every Spring Boot upgrade for a decade — how many unread lines does decade-ten's 350 become, and who audits them?
-- rust: 2,180 generated lines today — as derives compound over a decade of crates, does that ratio shrink or explode, and who re-audits it?
-- deno: One golden-path file per pattern relies on agents grepping it first — what happens the one time in a decade an agent doesn't?
+- incumbent: One shared FormGroup builder — a single bug there corrupts all 120 screens simultaneously; what's your actual rollback time for that blast radius?
+- rust: `cargo expand` emits 180,000 generated lines no human reads — how does "reviewer reads every diff" survive when derives ARE the permission logic?
+- deno: Your grants cover reads — **what enforces write-side field permission (a rep can't SET discount) and cross-field validation, with zero application code?**
 
 **rust asks**
-- incumbent: A transitive Spring Boot upgrade silently changes autoconfig behaviour in year 8 — who reviews that if there's no diff to read?
-- go: Your CDC payload is just `map[string]interface{}` — when Salesforce adds a field in year 6, what catches the mismatch before it panics in prod?
-- deno: With no compiler and only structural typing, what stops a decade of copy-pasted `any` casts from silently breaking the CDC row shape?
+- incumbent: When your 1,400-line builder has a bug, how does a reviewer find which of 120 screens is broken?
+- go: With no compiler link SQL-to-template, what actually proved all 18 drift-touched files were correct on your last migration?
+- deno: With no build step and no compiler, what catches a renamed column before it 500s in production instead of in review?
 
 **deno asks**
-- incumbent: Your JPA repo polls plus 350 trusted autoconfig lines — what's your p99 the day autoconfig silently upgrades a Hibernate default?
-- go: Two rendering models already forked your idiom in round 2 — in year 6, which one do the other three islands on the page use?
-- rust: 2,180 generated lines nobody diffs is a second undiffed layer on top of the borrow checker — why is that not worse than our lint rule?
+- incumbent: `@PreAuthorize` is a SpEL string with no compiler check — what test suite catches a copy-pasted method missing it before prod, and who writes that test?
+- go: Name the CI check that turns `{{.Tier}}`'s silent empty print into a build failure today, not a QA checklist item.
+- rust: A role-struct field omission compiles clean and ships silently for a decade — what mechanism, not "we'd catch it in review", fires an alarm before a customer notices?
 
 ### Pass 2 — answers
 
 **incumbent answers**
-- to go: 50 pods × 1 idle LISTEN conn each is trivial for Postgres (max_conns ~500 default); pgbouncer if it grows.
-- to rust: sccache lives in CI cache, not the agent sandbox — worst case 51s daily. That is Go's whole point; we concede it.
-- to deno: `deno check` plus PR-time integration tests catch a renamed field; no runtime backstop — that's the honest gap.
+- to go: Rollback: git revert + Helm redeploy, ~6 min for the full CRM; a canary on 3 screens catches it before all 120 ship broken.
+- to rust: 120 Playwright golden-screenshot diffs flag every broken screen in one CI run, ~4 min — the reviewer reads the diff, not all 120 live.
+- to deno: One ArchUnit rule (40 lines) scans bytecode for methods lacking `@PreAuthorize`; fails CI, not compile — **same gap as go's.**
 
 **go answers**
-- to incumbent: 50 idle LISTEN conns is trivial — but yes, one LISTEN-per-pod caps around low hundreds without a fan-in layer.
-- to rust: JSON unmarshal into a typed struct at the CDC boundary, not the map — mismatched fields fail decode with a named field, before the handler runs.
-- to deno: html/template — the Preact island is one badge, not a page pattern; the other three islands are plain HTMX swaps, zero Preact.
+- to incumbent: Zero leaks in production — but that rests on the same test suite deno demands, not on the language.
+- to rust: Nothing hand-verified — a template-parse test walking every screen's AST asserted each field name has a matching `fieldPerm` call in rules.go, wired into CI.
+- to deno: **A template-AST lint step**: parse every `.tmpl`, cross-check each `{{.Field}}` against `rules.go`'s registered perms, fail the build on any unmatched field — add it today.
 
 **rust answers**
-- to incumbent: sccache is CI infra, not a language feature — provision it once fleet-wide, same as caching go.sum or npm modules.
-- to go: It shrinks — derives are per-struct-field, so lines grow linearly with schema, not combinatorially with crate count; `cargo expand` can run in CI diffs.
-- to deno: Ours is generated from the struct the reviewer already read — deterministic, compiler-checked every build; your lint rule is advisory and only catches what someone remembered to write.
+- to incumbent: 40 structs, same one-field-selection pattern — agent writes in ~2 hours, human reviews in 1 day, one struct at a time.
+- to go: The reviewer reads the 600 hand-written field lists, not the 180K expansion — derives are boilerplate; the permission logic is which fields you typed.
+- to deno: A CI completeness check diffs each role-struct's fields against Account's canonical field list nightly and fails the build on any gap.
 
 **deno answers**
-- to incumbent: Nothing but `deno check`'s structural typing plus a CI-gated integration test asserting the row shape — miss both in one diff and it ships silently.
-- to go: Same failure any grep-first convention risks: the agent forks a second pattern; CI lint and PR review are the only catch — sprawl starts.
-- to rust: Same backstop, same gap — `deno check` plus an integration test on real field names; an `any` cast slips past both if untested.
+- to incumbent: **No history table today — snapshot-only is a genuine gap, conceded.** I'd add a trigger logging `column_privileges`/policy DDL changes.
+- to go: **`GRANT UPDATE(discount)` enforces write-side identically to reads**; cross-field validation is a CHECK constraint or trigger, not app code — genuinely zero.
+- to rust: Nothing pre-prod — a CI job diffing `information_schema.columns` against `db.d.ts` on every PR would catch it in review; **that gate doesn't exist today, conceded gap.**
 
 ### Round 3 scores (weighted /50)
-go 41 · rust 30 · deno 20 · incumbent 17 — running: go 132, deno 100, rust 86, incumbent 46
+deno 41 · incumbent 32 · rust 26 · go 22 — running: deno 116, go 89, incumbent 84, rust 81
 
-Judge notes: deno collapsed. It dodged the N-replica dedupe question, then conceded that its
-uniformity is a lint rule rather than the language, that a forked pattern is caught only by review,
-and that an untested `any` cast ships silently. Its GC answer ("replicas don't share GC") did not
-address the per-pod p99 charge. rust's best round: simplicity accepted that derive output is
-mechanical and 1:1 with a struct the reviewer already read — a real distinction from Spring's
-classpath scanning. go took a rare 2 from simplicity for conceding a fan-in layer it will need later.
+Judge notes: the round found the thing that actually separates these stacks. **Nobody's compiler
+catches a forgotten permission.** Every contender ends at a CI check. What differs is which way it
+fails and how hard the check is to keep correct: go conceded twice that a skipped `fieldPerm()`
+**fails open** — data exposed — and then proposed building a bespoke template-AST linter to patch a
+hole its own design created; simplicity gave it a 1 for that. rust's best moment of the series was
+naming the fail-closed/fail-open distinction. deno survived a coordinated attack on `SET LOCAL`
+under pgbouncer and on `BYPASSRLS` with correct answers, then volunteered two real gaps unasked.
+incumbent took performance 5 for being the only contender to give a decade-scale storage number.
 
 ---
 
-## Round 4 — The 2030 stress test
+## Round 4 — The CRM breach test
 
-An agent lands 2,000 lines overnight. Buried in it: `>=` where `>` belongs in "expires after 30
-days", so a quote exactly 30 days old shows expired. A human has 30 minutes in the morning.
+Overnight an agent ships a "Partner" role: 2,400 lines across 31 of 120 screens. Partners can see
+`Opportunity.discount`. They must not. Contractual breach. A human has 30 minutes.
 
 **incumbent**
-1. Lands in `spring-svc/QuotesService.java` (`ageDays >= 30`), re-expressed in `angular-mfe/quotes/quotes.component.ts` (badge logic) and `node-bff/routes/quotes.ts` (SSE filter). **Three copies, two languages, three files, no single source of truth** — that gap is the real bug.
-2. Of 2,000 lines: ~350-400 are actual logic; the rest is webpack/MF manifest churn, package-lock, application.yml, generated schematics — skimmed or skipped. Visible in a hunk: three separate one-line edits, each easy to wave through once, near-impossible to catch three times.
-3. Nothing compiles it away — both operators typecheck. Only a boundary test (`ageDays == 30 → not expired`) catches it. None exists. The 350 lines of trusted autoconfig noise is exactly what crowds out the time to do that math three times.
-4. 95s cold minimum — this touches three services. Honest answer: **no red at all, ever, until someone writes that specific test. Wall-clock to catch: infinite.**
-5. Decade: Spring autoconfig — 350 unread lines already conceded, compounding every Boot upgrade, never diffed.
+1. **Where:** `opportunity-detail.json` — `discount`'s role list reads `"read":["Sales","Partner"]`, copy-pasted from `quote-detail.json` where Partner legitimately belongs. The same string drives client hiding and the server `@PreAuthorize` SpEL — one wrong value, trusted twice.
+2. **30 minutes:** ~14 of 2,400 lines touch discount-adjacent JSON, 99.4% noise. It IS a visible hunk — a one-token value change indistinguishable from 30 correct sibling edits. **Not an absence — worse: a plausible-looking lie.**
+3. **Catches it:** ArchUnit (exists) only asserts the annotation is present, never that its role list is correct. Nothing today checks role-list correctness — must be built. **Fails OPEN.**
+4. **Wall-clock:** build green, ArchUnit green, 120 Playwright screenshots green — Partner renders the same pixels as Sales, correctly, for the wrong audience. **Nothing goes red. Ever.**
+5. **Blast radius:** 1 field, 1 screen — but copy-paste means auditing all 31. Revert ~6min. **Proof of exposure: Envers timestamps every read revision — join Partner sessions against discount-read events for exact users and dates.**
 
 **go**
-1. Lands in `internal/quotes/handler.go`, one comparison. Second real copy: `db/migrations/0007_quotes.sql`, same boundary in a `WHERE expires_at < now()` filter. **Two copies, two languages (Go and SQL).** The island and template don't duplicate it — they render the server's boolean, by design from round 3.
-2. Of 2,000 lines: zero generated/lockfile noise, all hand-written Go — **but that's the problem, not the fix.** A human reads maybe 300-400 lines carefully in 30 minutes. The diff hunk shows the bug, but only if that exact hunk is one of the 300 read.
-3. A boundary-case unit test. Not review. **Verbosity hurts here: Go's ceremony — error checks, struct literals — is exactly the haystack that buries a one-character bug from a skimming reviewer.**
-4. If the test exists: `go test ./quotes/...`, 0.9s to red. If it doesn't: no signal until a customer complains.
-5. Decade: untested boundary conditions — the edge cases nobody wrote assertions for, across hundreds of small handlers.
+1. **Where:** `screens/opportunity/detail.tmpl` — `{{.Discount}}` typed bare instead of `{{fieldPerm .User "Opportunity.discount"}}`.
+2. **30 minutes:** they can't triage by diff size — they must read all 31 touched screens' field lines, ~200-300 `{{.X}}` calls, to find the one missing wrapper among ~470 present. **No, a diff cannot show an absence.** `git diff` shows `+{{.Discount}}` — identical in shape to every correctly-wrapped line in the same PR. **The breach is invisible to line-by-line review.**
+3. **Catches it:** the template-AST linter proposed in round 3. **It does not exist today.** Fails OPEN, flatly, no hedge.
+4. **Wall-clock:** nothing goes red. Tests pass, build passes, deploy ships.
+5. **Blast radius:** 1 screen exposed, 31 changed. Rollback ~2min. **Proving who saw it: no field-access log exists — the audit table records object writes, not template reads. Cannot answer. Conceded.**
 
 **rust**
-1. Lands in `crates/api/src/models/quote.rs` (`is_expired()`). Restated in `migrations/003_quotes.sql` (a CHECK/view predicate) and again in `templates/quotes.html` (Askama `{% if %}` badge). **Three copies, one language, still three.**
-2. ~50 lines matter — the diff hunk plus the two other copies. **`cargo expand`'s 2,180 lines never enter the diff; expand output isn't committed, isn't reviewed. Irrelevant to this bug either way.**
-3. Nothing compiles-checks `>=` vs `>`. A `const EXPIRY: Duration` or newtype centralizes the *number*, not the *operator* — still three comparison sites. Only a boundary unit test catches it, and it must exist in all three spots.
-4. Save → CI cold 51s (no sccache in a clean sandbox, per our own concession) → red at ~13s test time on top. **Honest total ~64s, not 13s.**
-5. Decade: the SQL and template restatements — logic drift outside the compiler's reach.
+**Fail-closed doesn't help here — it defends omissions, not additions. It's dead on this bug.**
+1. **Where:** `crm/roles/opportunity.rs`, the line `discount: Decimal` inside `struct OpportunityAsPartner`.
+2. **30 minutes:** better than go's absence in one sense — it's a compiling, visible source line. Grep every `struct \w+As\w+` block: **~40 lines to actually read, not 2,400** — if the reviewer knows the pattern. If they don't, they're lost across 31 screens.
+3. **Catches it:** the nightly check diffs role-structs for MISSING entries. **It does not flag EXTRAS.** Nothing automated catches an added field. Gap, conceded straight.
+4. **Wall-clock:** compiles clean — 4m10s cold, 38s incremental, **zero red.**
+5. **Blast radius:** `grep -rn OpportunityAsPartner` across 31 screens. Revert one field, rebuild 38s. Proving exposure needs a field-level access log — doesn't exist.
 
 **deno**
-1. Lands in `db/quotes.sql` view (`now() - created_at >= interval '30 days'`). But `routes/quotes_list.ts` re-derives the same check for badge styling. **Two copies, not one. Honest hit: even a 7-concept stack duplicates a business rule across SQL and TS.**
-2. grep `interval '30 days'` and `>= 30` finds both copies in one pass — flat text, no generated layer, no autoconfig to wade through. Human reads those 2 lines plus ~20 of surrounding diff. 1,978 lines: noise.
-3. Not `deno check`, not lint. A boundary test: "quote created exactly 30 days ago shows active." That test is the spec for this edge — principle 9, not the type system.
-4. Save → `deno test --watch` reruns in 0.4s, 0s build. **Under half a second to red.**
-5. Decade truth: lint stops syntax drift, not semantic duplication. **What accumulates is copies of the same rule silently diverging — this bug, twice, is the pattern, not the exception.**
+1. **Where:** `schema.sql`, one line: `GRANT SELECT ON opportunity TO partner;` — missing the column list.
+2. **30 minutes:** **human reads 1 line, not 2,400.** The bug is a diff hunk in schema.sql, not logic buried across 31 screens — screens use `SELECT *` and never encode the rule, so there is nothing screen-side to audit. That's the payoff of moving permissions out of code.
+3. **Catches it:** a CI job diffing `information_schema.column_privileges` against a checked-in expected-grants file. **Does not exist today** — conceded in round 3. Plain `GRANT SELECT ON t TO r` is syntactically normal SQL; no linter flags it. **Fails OPEN.**
+4. **Wall-clock:** with the CI check, under 1s. Without it, 0s to green and the breach ships.
+5. **Blast radius:** all 31 screens instantly — the grant is global, not per-screen. **Rollback: one `REVOKE SELECT (discount) ON opportunity FROM partner`, seconds.** Proving the exposure window: no grant-history table today — can't say which partners saw it or since when.
 
 ### Round 4 scores (weighted /50)
-deno 47 · go 32 · rust 28 · incumbent 10
+deno 46 · rust 30 · incumbent 24 · go 12
 
-## Final: go 164 · deno 147 · rust 114 · incumbent 56 (of 200)
+## Final: deno 162 · rust 111 · incumbent 108 · go 101 (of 200)
 
-**The finding nobody set out to make:** every stack duplicates the 30-day rule across a language
-boundary — incumbent 3 copies in 2 languages, rust 3, go 2, deno 2 — and no compiler in any of
-them catches `>=` versus `>`. The stack does not decide whether this bug ships. The test does.
-What the stack decides is how fast you learn (deno 0.4s, go 0.9s, rust 64s, incumbent never) and
-how much unrelated text a human wades through to find it (deno 22 lines of 2,000; go 300-400;
-incumbent 350 lines of autoconfig noise crowding out the arithmetic).
+**The finding:** all four stacks fail open. Not one goes red. The compiler is irrelevant — no type
+system distinguishes "this role may read this column" from "this role may not." What separates them
+is only **where the rule lives**, and therefore how many places it can be wrong:
+
+| | rule lives in | places it can be wrong | lines a human reads to find the breach | revert |
+|---|---|---|---|---|
+| deno | one Postgres grant | 1 | 1 | seconds |
+| rust | 120 role-structs | 120 | ~40 | 38s |
+| incumbent | JSON + annotation, trusted twice | ~14 per field | ~14 (but a plausible lie) | 6min |
+| go | ~470 template call sites | ~470 | 200-300 (and it's an absence) | 2min |
+
+Go won both previous debates on "hand-write it, nothing hidden." At 120 screens that same stance
+produces a rule repeated 470 times and a breach that is a *missing line* — and a diff cannot show
+an absence. It finished last.
