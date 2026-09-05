@@ -91,3 +91,78 @@ Weights: reviewer 3, agent 3, simplicity 2, performance 2. Max weighted = 50 per
 - go 2 — Concedes a fan-in layer must be added later at scale — same penalty as a layer present now.
 - rust 4 — Derive macros defended as mechanical, 1:1 with reviewed structs — no real extra concept added.
 - deno 3 — Forked patterns caught only by lint/review, not the compiler — concepts can silently multiply.
+
+**performance**
+- incumbent 3 — Honest 3.2s×N-pod tax and BFF-latency concessions, but ducked deno's Hibernate-upgrade p99 question.
+- go 5 — Only one to concede a real cap — LISTEN-per-pod low hundreds — plus a concrete typed-decode fix.
+- rust 2 — Zero new numbers; retreated to "derives are deterministic," contributing nothing to the scaling question.
+- deno 1 — Non-answer to jitter ("replicas don't share GC" ≠ the per-pod p99 charge) and dodged NOTIFY fan-out dedupe.
+
+| contender | reviewer (3) | agent (3) | simplicity (2) | performance (2) | **weighted** |
+|---|---|---|---|---|---|
+| incumbent | 2 | 1 | 1 | 3 | **17** |
+| go | 5 | 4 | 2 | 5 | **41** |
+| rust | 3 | 3 | 4 | 2 | **30** |
+| deno | 2 | 2 | 3 | 1 | **20** |
+
+**Running total after R3: go 132, deno 100, rust 86, incumbent 46.**
+
+## Round 4 — The 2030 stress test
+
+| contender | reviewer (3) | agent (3) | simplicity (2) | performance (2) | **weighted** |
+|---|---|---|---|---|---|
+| incumbent | 1 | 1 | 1 | 1 | **10** |
+| go | 3 | 3 | 3 | 4 | **32** |
+| rust | 4 | 2 | 2 | 3 | **28** |
+| deno | 5 | 4 | 5 | 5 | **47** |
+
+**reviewer**
+- incumbent 1 — Three copies, two languages, 350 unread autoconfig lines, no test — infinite time to catch.
+- go 3 — Two copies, but 2,000 honest lines are the haystack burying a one-char bug.
+- rust 4 — Three copies but only ~50 lines matter; expand's 2,180 lines never touch the diff.
+- deno 5 — Two copies, grep finds both in one pass; 1,978 of 2,000 lines are true noise.
+
+**agent**
+- incumbent 1 — Infinite red confirmed; three copies, two languages, 350 trusted lines crowd out testing.
+- go 3 — 0.9s red is the fastest real number, but verbose ceremony admittedly buries the hunk.
+- rust 2 — Three copies again; honest 64s clean-sandbox loop is the slowest real signal.
+- deno 4 — 0.4s red, flat grep finds both copies fast, but two copies not one.
+
+**simplicity**
+- incumbent 1 — Worst drift: 3 copies, 2 languages, and dodges duplication by blaming autoconfig.
+- go 3 — Ties fewest copies (2) but its decade answer ignores duplication, naming untested edges instead.
+- rust 2 — 3 copies despite one language; honest decade answer names SQL/template drift directly.
+- deno 5 — Fewest copies (2) plus the most honest accumulation answer: duplication is the pattern itself.
+
+**performance**
+- incumbent 1 — 95s cold spans three services, and concedes zero red signal ever exists untested.
+- go 4 — 0.9s to red if the test exists; cheapest compiled loop, honest about the no-test gap.
+- rust 3 — Honestly revised 51s→64s with no sccache; rewarded for honesty, still costliest loop.
+- deno 5 — Zero build, 0.4s to red; cheapest feedback economics of all four.
+
+---
+
+## Final tally
+
+| contender | R1 | R2 | R3 | R4 | **total /200** |
+|---|---|---|---|---|---|
+| **go** | 46 | 45 | 41 | 32 | **164** |
+| deno | 35 | 45 | 20 | 47 | **147** |
+| rust | 33 | 23 | 30 | 28 | **114** |
+| incumbent | 15 | 14 | 17 | 10 | **56** |
+
+### By judge (raw sum across 4 rounds, max 20)
+
+| contender | reviewer (3) | agent (3) | simplicity (2) | performance (2) |
+|---|---|---|---|---|
+| go | **17** | **17** | 13 | **18** |
+| deno | 16 | 13 | **18** | 12 |
+| rust | 12 | 12 | 11 | 10 |
+| incumbent | 5 | 5 | 4 | 9 |
+
+**Winner: go (164/200)** — first on the two heaviest judges and on performance.
+**deno (147)** wins simplicity outright and takes round 4 by a mile; it loses on the agent judge,
+where its uniformity is a lint rule rather than the language.
+**rust (114)** never recovered from disclosing 2,180 generated lines in round 2 — then argued in
+round 4 that they never enter a diff, which reviewer accepted a round too late.
+**incumbent (56)** lost every judge in every round and conceded its own Node BFF is unearned.

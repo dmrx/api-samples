@@ -217,3 +217,60 @@ numbers whose named load matched the claim. incumbent retracted its own 40K req/
 - to incumbent: Nothing but `deno check`'s structural typing plus a CI-gated integration test asserting the row shape — miss both in one diff and it ships silently.
 - to go: Same failure any grep-first convention risks: the agent forks a second pattern; CI lint and PR review are the only catch — sprawl starts.
 - to rust: Same backstop, same gap — `deno check` plus an integration test on real field names; an `any` cast slips past both if untested.
+
+### Round 3 scores (weighted /50)
+go 41 · rust 30 · deno 20 · incumbent 17 — running: go 132, deno 100, rust 86, incumbent 46
+
+Judge notes: deno collapsed. It dodged the N-replica dedupe question, then conceded that its
+uniformity is a lint rule rather than the language, that a forked pattern is caught only by review,
+and that an untested `any` cast ships silently. Its GC answer ("replicas don't share GC") did not
+address the per-pod p99 charge. rust's best round: simplicity accepted that derive output is
+mechanical and 1:1 with a struct the reviewer already read — a real distinction from Spring's
+classpath scanning. go took a rare 2 from simplicity for conceding a fan-in layer it will need later.
+
+---
+
+## Round 4 — The 2030 stress test
+
+An agent lands 2,000 lines overnight. Buried in it: `>=` where `>` belongs in "expires after 30
+days", so a quote exactly 30 days old shows expired. A human has 30 minutes in the morning.
+
+**incumbent**
+1. Lands in `spring-svc/QuotesService.java` (`ageDays >= 30`), re-expressed in `angular-mfe/quotes/quotes.component.ts` (badge logic) and `node-bff/routes/quotes.ts` (SSE filter). **Three copies, two languages, three files, no single source of truth** — that gap is the real bug.
+2. Of 2,000 lines: ~350-400 are actual logic; the rest is webpack/MF manifest churn, package-lock, application.yml, generated schematics — skimmed or skipped. Visible in a hunk: three separate one-line edits, each easy to wave through once, near-impossible to catch three times.
+3. Nothing compiles it away — both operators typecheck. Only a boundary test (`ageDays == 30 → not expired`) catches it. None exists. The 350 lines of trusted autoconfig noise is exactly what crowds out the time to do that math three times.
+4. 95s cold minimum — this touches three services. Honest answer: **no red at all, ever, until someone writes that specific test. Wall-clock to catch: infinite.**
+5. Decade: Spring autoconfig — 350 unread lines already conceded, compounding every Boot upgrade, never diffed.
+
+**go**
+1. Lands in `internal/quotes/handler.go`, one comparison. Second real copy: `db/migrations/0007_quotes.sql`, same boundary in a `WHERE expires_at < now()` filter. **Two copies, two languages (Go and SQL).** The island and template don't duplicate it — they render the server's boolean, by design from round 3.
+2. Of 2,000 lines: zero generated/lockfile noise, all hand-written Go — **but that's the problem, not the fix.** A human reads maybe 300-400 lines carefully in 30 minutes. The diff hunk shows the bug, but only if that exact hunk is one of the 300 read.
+3. A boundary-case unit test. Not review. **Verbosity hurts here: Go's ceremony — error checks, struct literals — is exactly the haystack that buries a one-character bug from a skimming reviewer.**
+4. If the test exists: `go test ./quotes/...`, 0.9s to red. If it doesn't: no signal until a customer complains.
+5. Decade: untested boundary conditions — the edge cases nobody wrote assertions for, across hundreds of small handlers.
+
+**rust**
+1. Lands in `crates/api/src/models/quote.rs` (`is_expired()`). Restated in `migrations/003_quotes.sql` (a CHECK/view predicate) and again in `templates/quotes.html` (Askama `{% if %}` badge). **Three copies, one language, still three.**
+2. ~50 lines matter — the diff hunk plus the two other copies. **`cargo expand`'s 2,180 lines never enter the diff; expand output isn't committed, isn't reviewed. Irrelevant to this bug either way.**
+3. Nothing compiles-checks `>=` vs `>`. A `const EXPIRY: Duration` or newtype centralizes the *number*, not the *operator* — still three comparison sites. Only a boundary unit test catches it, and it must exist in all three spots.
+4. Save → CI cold 51s (no sccache in a clean sandbox, per our own concession) → red at ~13s test time on top. **Honest total ~64s, not 13s.**
+5. Decade: the SQL and template restatements — logic drift outside the compiler's reach.
+
+**deno**
+1. Lands in `db/quotes.sql` view (`now() - created_at >= interval '30 days'`). But `routes/quotes_list.ts` re-derives the same check for badge styling. **Two copies, not one. Honest hit: even a 7-concept stack duplicates a business rule across SQL and TS.**
+2. grep `interval '30 days'` and `>= 30` finds both copies in one pass — flat text, no generated layer, no autoconfig to wade through. Human reads those 2 lines plus ~20 of surrounding diff. 1,978 lines: noise.
+3. Not `deno check`, not lint. A boundary test: "quote created exactly 30 days ago shows active." That test is the spec for this edge — principle 9, not the type system.
+4. Save → `deno test --watch` reruns in 0.4s, 0s build. **Under half a second to red.**
+5. Decade truth: lint stops syntax drift, not semantic duplication. **What accumulates is copies of the same rule silently diverging — this bug, twice, is the pattern, not the exception.**
+
+### Round 4 scores (weighted /50)
+deno 47 · go 32 · rust 28 · incumbent 10
+
+## Final: go 164 · deno 147 · rust 114 · incumbent 56 (of 200)
+
+**The finding nobody set out to make:** every stack duplicates the 30-day rule across a language
+boundary — incumbent 3 copies in 2 languages, rust 3, go 2, deno 2 — and no compiler in any of
+them catches `>=` versus `>`. The stack does not decide whether this bug ships. The test does.
+What the stack decides is how fast you learn (deno 0.4s, go 0.9s, rust 64s, incumbent never) and
+how much unrelated text a human wades through to find it (deno 22 lines of 2,000; go 300-400;
+incumbent 350 lines of autoconfig noise crowding out the arithmetic).
