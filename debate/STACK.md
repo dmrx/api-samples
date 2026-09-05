@@ -1,114 +1,95 @@
 # The stack
 
-*Supersedes everything else in this folder. Greenfield agent-native CRM, 2030 horizon, judged on
-simplicity, efficiency, readability. Agents write most of the code; one human reads every diff.*
+One database. One service. One language. Two doors — one for people, one for agents.
 
 ---
 
-## In one line
+## The six pieces
 
-**Postgres does nearly everything. One TypeScript service of plain functions does the rest.
-Humans get server-rendered HTML; agents get MCP. Both call the same function.**
+**1. PostgreSQL** — holds everything.
+The data. Who may see which column (`GRANT`) and which rows (`ROW LEVEL SECURITY`). Search (built-in
+full-text, `pgvector` for similarity). The change log (`entity_history`, one row per change).
+Background jobs (`pg-boss`). Relationships between records (one `relationships` table). Reports (a
+read replica). It is the only place a permission rule lives.
 
----
+**2. One TypeScript service, on Deno 2.**
+Plain functions: `reassignOwner(tx, actor, input)`. No framework, no dependency injection, no ORM.
+Each function opens a transaction, sets the acting user, calls SQL, returns. Compiled to a single
+binary. Run with permissions off by default: it may talk to the database and the model endpoint and
+nothing else, and that fact is one line in the deploy file.
 
-## The six boxes
+**3. HTML from the server, for people.**
+The service renders the page. HTMX swaps the parts that change. Server-sent events for anything
+live. A small Preact island only where a widget genuinely holds state — a chat pane, a board.
+No React app, no client-side state, no second copy of anything.
 
-| box | job |
-|---|---|
-| **PostgreSQL** | System of record. The *only* authorization site: column `GRANT`s + `FORCE ROW LEVEL SECURITY`. Also search (FTS + pgvector), events (transactional outbox + logical replication), queues and scheduled jobs (`SKIP LOCKED` / pg-boss — retries, timers, cron), audit (`entity_history`), relationships (one typed edge table), analytics (read replica). |
-| **One TypeScript service** | Plain exported functions, `(tx, actor, input)`, wired explicitly at one composition root. No DI container, no decorators, no ORM — the query in the file is the query that runs. Runtime: **Deno 2**, compiled to one binary, run with default-deny permissions (`--allow-net=db:5432,llm-endpoint`) so an agent-written service cannot reach anything the manifest doesn't name. |
-| **Server-rendered HTML + HTMX** | The human UI. The service renders HTML; the wire format is HTML; SSE for anything live. **Preact islands only where a widget is genuinely stateful** — a chat pane, a pipeline board. No SPA, no client state store, no second schema. |
-| **MCP** | The agent surface. `crm.search_customers`, `get_customer_context`, `create_opportunity`, `update_relationship`, `create_task`, `analyze_account`. Each tool is a registration of an existing domain function — `register()` takes a function reference, so a tool *cannot* carry its own logic. |
-| **Kubernetes · GitHub · OpenTelemetry** | Fixed. |
-| **Model-agnostic LLMs · S3 · OIDC** | Fixed. |
+**4. MCP, for agents.**
+Six tools: `search_customers`, `get_customer_context`, `create_opportunity`,
+`update_relationship`, `create_task`, `analyze_account`. Each is a one-line registration of a
+function from piece 2. The registry only accepts a function reference, so a tool cannot carry logic
+of its own. Agents and people call the same code.
 
-**What it costs:** 2 languages (SQL, TypeScript). "Add a customer health score" touches ~7 files
-including the UI and a cross-org security test, about a day. Churn query p99 ~45ms at 5M entities.
-**Two things can page at 2am: Postgres and Kubernetes.** ~$600/month at 500 users.
+**5. A separate schema for the AI parts.**
+Embeddings, agent memory, evaluation traces live in `reasoning`, under their own database role, with
+no foreign keys into the real records and no write permission on them. It can be wiped without
+touching a customer.
 
----
-
-## The five rules — these matter more than the boxes
-
-**1. Authorization lives in Postgres and nowhere else.** A rule in application code fails open,
-and its failure mode is a *missing line*, which no diff can show. RLS at the DB role means an
-agent-invented call path inherits the rule it forgot. This is the single finding every debate in
-this folder agreed on.
-
-**2. One typed domain function is the source of everything.** Its signature produces the MCP tool
-definition, the validator, the test fixture, and — if an island ever needs one — a typed RPC. No
-surface hand-maintains a copy of another. The domain graph is declared once, in the schema.
-
-**3. Three systems, three schemas, three roles.** `public` (record, role `app_write`) · the service
-(interaction, connects only as `app_write`) · `reasoning` (embeddings, agent memory, eval traces,
-role `reasoning_svc`). Zero foreign keys from `public` into `reasoning`; no write grant back. The
-reasoning schema can be truncated without touching a record. **This is what stops the CRM becoming
-an LLM-shaped database.**
-
-**4. Every state change is an event — as history, never as truth.** The domain function writes the
-row and an `entity_history` row in the same transaction. Agents get `history[]` on demand and can
-answer *"why did this renewal probability drop"* with cited events. Tables are never rebuilt from
-the log: event-sourcing as system of record lost on projector drift, double authorization, and
-erasure.
-
-**5. Relationships are one typed, temporal edge table with a depth cap.**
-`relationships(from_id, to_id, type, valid_from, valid_to, props)`. `get_customer_context` is one
-recursive CTE, `depth <= 4`, cycle guard on the path. Edge RLS policies are generated from the two
-endpoints' node policies by one macro. Entity eight is a row filter, not a new join. No graph
-database.
+**6. Kubernetes, GitHub, OpenTelemetry, S3, OIDC login, any LLM.**
+Plumbing. Nothing to decide.
 
 ---
 
-## What's out, and the number that puts it back
+## How one request works
 
-| out | back when |
-|---|---|
-| React as the app shell | a screen is more app than form (visual workflow editor, drag-and-drop board), a mobile client shares the API, or the team won't retrain |
-| GraphQL, REST | a partner needs a public API — generate one surface from the domain functions, same as MCP |
-| Temporal (workflow engine) | a process must wait days and include a human step — a renewal waiting a week for a signature. Until then pg-boss's retries, timers and cron are enough, and the outbox already records the events |
-| Cedar / OPA | >50 policy rules, or a rule spans services |
-| Kafka / Redpanda | outbox lag p99 >5s, or >3 consumers on the replication slot |
-| OpenSearch | FTS p99 >300ms at 5M rows, or fuzzy/multilingual ranking is user-visible |
-| Snowflake / Databricks | an analytics query exceeds 30s on the read replica |
-| LangGraph / ADK orchestration | >10 MCP tools, or multi-agent handoff needs checkpointing |
-| Okta / Auth0 | the first enterprise buyer who needs SSO lifecycle management |
-| NestJS, any DI framework | never — the diff can't show what a container wires |
-| a graph database | a traversal genuinely needs depth >4 or graph algorithms |
-| Salesforce sync | the day a customer already lives there; it's a peer through the outbox, never a source |
+A rep opens an account page: browser → service function → `BEGIN; SET LOCAL app.user = rep`
+→ SQL (Postgres strips the rows and columns the rep may not see) → HTML back.
+
+An agent asks for account context: MCP tool → **the same function** → the same transaction, the
+same SQL, the same stripping → JSON back, with the last 20 changes attached if it asks.
+
+Nobody can forget the permission check. It isn't in the code.
 
 ---
 
-## Runtime: why Deno 2
+## How one change works
 
-Same engine as Node (V8), an LTS channel, a single binary, and the one thing that matters for
-agent-written code: **a permission sandbox a reviewer can verify in one line.** Bun is faster to
-start and install, but runs a different engine on a faster release cadence with no sandbox; at CRM
-scale the speed is noise because Postgres does the work. Node with native TypeScript was the
-fallback only if a Node-only SDK forced it; nothing on this list does.
+"Add a health score to accounts." One migration, one function, one tool registration, one template
+change, one test that tries to read another rep's account and must fail. Two languages, SQL and
+TypeScript. About a day. One person reads the whole diff.
 
 ---
 
-## How the debates got here
+## What is deliberately not here
 
-- **Go, Deno, Rust, .NET, Spring, Phoenix** all had their round. The winner tracked the workload —
-  Go for one screen, Deno for 120, .NET for compiler-generated permissions — and once the frame was
-  "one language spanning model, tool, validator, test," TypeScript held.
-- **SSR won every screen debate** on principle 5 and on the numbers. It was displaced in one run
-  only because React had been listed as fixed; that assumption is withdrawn here.
-- **Seventeen boxes became seven.** The list's own author, arguing as "maximal," deleted six of them
-  in the final round and ended with the leanest stack in the room.
-- **The database, not the language, decided everything.** p99 spread across five languages was 14ms.
-  Concept spread was three. What differed was where the permission rule lived.
+| left out | why | the day it comes back |
+|---|---|---|
+| React as the app | a second copy of every screen and every type | a screen that is more app than form, or a mobile client |
+| GraphQL, REST | a second copy of the schema | a partner needs a public API |
+| a policy engine (Cedar/OPA) | Postgres already does it, at zero extra hops | more than ~50 rules |
+| Kafka | an outbox table already records every change | more than 3 consumers, or lag over 5s |
+| OpenSearch | built-in search is enough at millions of rows | search over 300ms |
+| a workflow engine (Temporal) | `pg-boss` does retries, timers and cron | a process that waits days with a human step in it |
+| a data warehouse | the read replica | a report over 30s |
+| a graph database | one table and one recursive query | a walk deeper than 4 hops |
+| any framework with decorators or a DI container | the diff can't show what it wires | never |
 
 ---
 
-## Build these before the first screen — every one of them fails open
+## Why it holds up to 2030
 
-1. **Grants CI check** — diff `information_schema.column_privileges` against a checked-in file.
-   Forty lines; covers every screen and every tool at once.
-2. **Schema-drift gate** — regenerate types, validators and tool definitions from the catalog on
-   every PR; fail on any diff. A required status check, no bypass.
-3. **`SECURITY DEFINER` ban** in CI — the one real RLS escape.
-4. **A DDL/grant history trigger** — so you can say what access looked like on a past date.
-5. **pgaudit on sensitive columns** — so you can say who *read* a leaked field, not just revert it.
+- **Postgres and TypeScript are the two safest bets in the room to still build in 2031.**
+- **Agents will invent call paths.** The permission rule sits underneath all of them.
+- **Agents write cheaply and humans review expensively.** Every choice above shrinks the diff.
+- **Every box that isn't here has a number that adds it.** Nothing is bolted on in advance.
+
+---
+
+## Build these five things before the first screen
+
+1. A CI check that the database's column grants match a file in the repo.
+2. A CI check that regenerates types from the database and fails on any drift — required, no bypass.
+3. A CI ban on `SECURITY DEFINER` — the one way around row security.
+4. A trigger that logs every change to a grant or policy, with a timestamp.
+5. `pgaudit` on the sensitive columns, so you can say who *read* a field, not just fix it.
+
+Every one of these covers a failure that is silent without it.
