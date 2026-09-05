@@ -12,12 +12,12 @@ Humans get server-rendered HTML; agents get MCP. Both call the same function.**
 
 ---
 
-## The seven boxes
+## The six boxes
 
 | box | job |
 |---|---|
-| **PostgreSQL** | System of record. The *only* authorization site: column `GRANT`s + `FORCE ROW LEVEL SECURITY`. Also search (FTS + pgvector), events (transactional outbox + logical replication), queues (`SKIP LOCKED` / pg-boss), audit (`entity_history`), relationships (one typed edge table), analytics (read replica). |
-| **One TypeScript service** | Plain exported functions, `(tx, actor, input)`, wired explicitly at one composition root. No DI container, no decorators, no ORM — the query in the file is the query that runs. Runtime: Deno or Bun, compiled to one binary. |
+| **PostgreSQL** | System of record. The *only* authorization site: column `GRANT`s + `FORCE ROW LEVEL SECURITY`. Also search (FTS + pgvector), events (transactional outbox + logical replication), queues and scheduled jobs (`SKIP LOCKED` / pg-boss — retries, timers, cron), audit (`entity_history`), relationships (one typed edge table), analytics (read replica). |
+| **One TypeScript service** | Plain exported functions, `(tx, actor, input)`, wired explicitly at one composition root. No DI container, no decorators, no ORM — the query in the file is the query that runs. Runtime: **Deno 2**, compiled to one binary, run with default-deny permissions (`--allow-net=db:5432,llm-endpoint`) so an agent-written service cannot reach anything the manifest doesn't name. |
 | **Server-rendered HTML + HTMX** | The human UI. The service renders HTML; the wire format is HTML; SSE for anything live. **Preact islands only where a widget is genuinely stateful** — a chat pane, a pipeline board. No SPA, no client state store, no second schema. |
 | **MCP** | The agent surface. `crm.search_customers`, `get_customer_context`, `create_opportunity`, `update_relationship`, `create_task`, `analyze_account`. Each tool is a registration of an existing domain function — `register()` takes a function reference, so a tool *cannot* carry its own logic. |
 | **Temporal** | Durable multi-week workflows with human steps: onboarding, renewal, escalation. Started by the domain function in the same transaction as the outbox row. |
@@ -26,7 +26,7 @@ Humans get server-rendered HTML; agents get MCP. Both call the same function.**
 
 **What it costs:** 2 languages (SQL, TypeScript). "Add a customer health score" touches ~7 files
 including the UI and a cross-org security test, about a day. Churn query p99 ~45ms at 5M entities.
-2-3 things can page at 2am. ~$950/month at 500 users.
+**Two things can page at 2am: Postgres and Kubernetes.** ~$600/month at 500 users.
 
 ---
 
@@ -67,6 +67,7 @@ database.
 |---|---|
 | React as the app shell | a screen is more app than form (visual workflow editor, drag-and-drop board), a mobile client shares the API, or the team won't retrain |
 | GraphQL, REST | a partner needs a public API — generate one surface from the domain functions, same as MCP |
+| Temporal (workflow engine) | a process must wait days and include a human step — a renewal waiting a week for a signature. Until then pg-boss's retries, timers and cron are enough, and the outbox already records the events |
 | Cedar / OPA | >50 policy rules, or a rule spans services |
 | Kafka / Redpanda | outbox lag p99 >5s, or >3 consumers on the replication slot |
 | OpenSearch | FTS p99 >300ms at 5M rows, or fuzzy/multilingual ranking is user-visible |
@@ -76,6 +77,16 @@ database.
 | NestJS, any DI framework | never — the diff can't show what a container wires |
 | a graph database | a traversal genuinely needs depth >4 or graph algorithms |
 | Salesforce sync | the day a customer already lives there; it's a peer through the outbox, never a source |
+
+---
+
+## Runtime: why Deno 2
+
+Same engine as Node (V8), an LTS channel, a single binary, and the one thing that matters for
+agent-written code: **a permission sandbox a reviewer can verify in one line.** Bun is faster to
+start and install, but runs a different engine on a faster release cadence with no sandbox; at CRM
+scale the speed is noise because Postgres does the work. Node with native TypeScript was the
+fallback only if a Node-only SDK forced it; nothing on this list does.
 
 ---
 
