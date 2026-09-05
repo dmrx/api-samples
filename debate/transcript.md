@@ -1,127 +1,130 @@
-# Stack debate — quotes screen
+# Stack debate — a stack for agentic development, 2030+
 
-Scenario: quotes list, live status via SSE, Salesforce → CDC → Postgres, deployed on ROSA.
+**Question:** what do you standardize on for a decade of agent-written code, when the scarce
+resource is human review? Judged on simplicity, performance, and human reviewability. Magic
+(action at a distance) and sprawl (repos, layers, languages, deps) are direct penalties.
+
+Test workload (the probe, not the subject): quotes screen — list, live status over SSE,
+Salesforce → CDC → Postgres, on ROSA.
+
 Contenders: incumbent (Angular MFE + Node BFF + Java Spring), go, rust, deno.
-Judges: everyman (1), reviewer (2), agent (2), operator (1).
+Judges: reviewer (3), agent (3), simplicity (2), performance (2). Max 50 per round.
 
 ---
 
 ## Round 1 — Opening (80 words each)
 
 **incumbent**
-Angular's federated remote loads live status for 500 quotes and re-renders the list on every SSE tick because zone.js patches the EventSource callback into change detection — CDR runs, diffs the whole tree, not just the changed row. Spring Boot core service starts in 3-4s cold, hot-reloads in under 2 via DevTools, and its Postgres CDC consumer is a proven Debezium pattern already running in prod. Module Federation's remoteEntry.json versioning gives one-command rollback per micro-frontend — smallest blast radius of any option here, and OpenShift already runs this exact topology today.
+Standardize on Angular+MFE, Node BFF, Java Spring. Yes it's heavy — that's the point: at decade scale you need one prescribed shape, not four thousand snowflakes. Angular CLI/ESLint reject bad code at compile time, not review time. Spring Boot's conventions are the most-represented enterprise pattern in every model's training data — agents write idiomatic Spring correctly more often than novel stacks. JVM: predictable GC, 40K req/s per pod, decades of profilers. Uniformity beats novelty when nobody remembers why.
 
 **go**
-Go compiles this whole screen in under a second, ships a static binary, one process on ROSA. html/template renders the list server-side; HTMX swaps rows over SSE with zero client router. One Preact/htm island for live-updating badges — no bundler, no npm install, no build step at all: `<script type="module">` from a CDN or vendored file. Reviewer reads Go top to bottom: no macros, no generics gymnastics, no ORM magic — pgx queries are plain SQL you can paste into psql. Standard library `net/http` means fewer dependencies to patch by 2031.
+Go compiles agent code in 2 seconds, errors point to exact file:line, and there's exactly one idiomatic way to write an HTTP handler — no framework, no DI, no build step for the server. `net/http` + `html/template` are stdlib: ten agents given the same ticket write near-identical diffs, because the language forecloses alternatives. Preact/htm islands add zero bundler — script tags, no JSX transform. Static binary, 15MB RSS per pod, sub-ms p50, cold start under 50ms. Nothing to configure, nothing hidden.
 
 **rust**
-Rust compiles to one static binary — no JVM, no node_modules, no npm audit churn. Axum's type system makes handler bugs compile errors, not 2am pages. Askama templates compile against your Rust types: rename a field, template fails to build — the compiler is your reviewer's second pair of eyes. HTMX swaps HTML fragments over SSE; zero client state to debug. tokio-postgres streams CDC rows with no GC pause, no OOM-killed pod. One Cargo.lock, one deletable crate, ROSA-friendly minimal container image (~20MB).
+The compiler is the reviewer's proxy: `Option<T>`, exhaustive `match`, and lifetimes reject null derefs, unhandled states, and use-after-free before a human opens the diff. Axum handlers are typed functions, not middleware chains. Askama templates fail the build on a typo'd field — no runtime surprise. 8ms p99, 15MB RSS per pod, zero GC pauses. Cost: macros (`#[derive]`, `askama::Template`) hide codegen, and rustc's 45s incremental build slows the agent's edit-compile-test loop versus Go's 2s.
 
 **deno**
-Deno ships TypeScript-native: no tsc, no webpack, no bundler config to review — `deno run server.ts` is the entire build. That's zero build-artifact diffs, ever (principle 8, 10). Standard library, no node_modules tree of 40,000 files (rust and go don't even have that problem, but incumbent's Angular MFE does). Deno.serve + HTMX fragments over SSE: one process, one language front-to-back, no BFF translation layer (principle 5, 6). `deno test` needs no config. Upgrading Deno is one binary swap — no lockfile hell across 200 npm packages.
+Zero build step: the diff is the binary. No webpack, no tsc emit, no source maps to trust — `deno run server.ts` executes the exact bytes reviewed. Angular MFE needs Module Federation manifests plus Java services humans can't trace in one pass; Rust/Go need a compile step between diff and behavior. Deno: built-in fmt/lint/test, npm compat, single 90MB binary, sub-20ms cold start. One language, server and islands both TypeScript — zero context-switch tax for the agent or the reviewer.
 
-### Round 1 scores (weighted /30)
-go 26 · deno 23 · rust 20 · incumbent 12
+### Round 1 scores (weighted /50)
+go 46 · deno 35 · rust 33 · incumbent 15
 
-Judge notes: everyman punished incumbent's full-tree re-render and marked deno + rust down for
-ignoring bad-network behaviour. reviewer rewarded deno (nothing hidden) and dinged rust for
-Askama macro expansion, incumbent for zone.js runtime wiring. agent rewarded go's sub-second
-build, dinged rust for slow compiles. operator rewarded rust's 20MB binary, dinged go's
-CDN-fetched Preact island and deno for giving no pod numbers.
+Judge notes: reviewer put go top — nothing to expand, no codegen between diff and binary — and
+gutted incumbent for Module Federation wiring and Spring DI. agent's decisive criterion was
+**idiom uniformity**: go 5 (the language forecloses alternatives), deno 3 (no-framework TS
+invites ten different architectures). simplicity gave deno the only 5 (one language, zero build
+step). performance was hostile to everyone: no contender sourced a number, deno gave almost none,
+and rust's "15MB RSS" identical to go's read as a copy.
 
 ---
 
-## Round 2 — Scenario: layout, data path, numbers (150 words each)
+## Round 2 — Show the whole thing a human must review
 
 **incumbent**
 ```
-quotes-mfe/src/app/quotes/
-  quotes.component.ts (118)
-  quotes-list.component.ts (86, OnPush, trackBy)
-  quote-row.component.ts (52)
-  quotes.service.ts (71, EventSource)
-  quote.model.ts (18)
-  quotes.module.ts (24)
-bff/src/routes/quotes.ts (95)
-bff/src/sse/quotes-stream.ts (63)
-core-svc/src/main/java/com/acme/quotes/
-  QuoteController.java (110)
-  QuoteCdcListener.java (88)
-  Quote.java (40)
+angular-mfe/quotes/quotes.component.ts    node-bff/routes/quotes.ts
+angular-mfe/quotes/quotes.service.ts      node-bff/sse/quotes-stream.ts
+angular-mfe/webpack.config.js             spring-svc/QuotesController.java
+spring-svc/QuotesService.java             spring-svc/QuoteEntity.java
+spring-svc/QuoteRepository.java           spring-svc/application.yml
+debezium/salesforce-quotes.json
 ```
-Total 765 lines, 3 repos.
+Data path: SFDC field edit → Debezium CDC → Kafka → Postgres row → JPA repo polls → Spring service/controller → Node BFF SSE proxy → Angular HttpClient/EventSource → RxJS Observable → zone.js change detection → template renders.
 
-Trace: Salesforce quote update fires Platform Event → Debezium CDC connector replicates row into Postgres `quotes` via WAL → QuoteCdcListener.java polls slot, publishes to internal Kafka topic → QuoteController.java streams SSE to BFF → quotes-stream.ts relays SSE to browser → quotes.service.ts EventSource wrapped in ngZone.runOutsideAngular → quote-row.component.ts (OnPush, trackBy id) patches one row.
+**Concepts, 15:** Salesforce CDC config, Kafka, Debezium JSON, Postgres, JPA/Hibernate, Spring DI annotations, Spring Boot autoconfig, Java, SSE proxying, Node/Express, TypeScript, Angular DI, RxJS, Module Federation webpack, zone.js.
 
-Admission: Round 1's full-tree diff was real — 500-row CDR cost ~40ms per tick. Fixed here with OnPush + trackBy + runOutsideAngular: single-row patch, under 2ms.
+**Lines:** ~520 hand-written across 11 files. Trusted unread: ~350 lines of Spring autoconfig, Angular CLI schematic boilerplate, MF remoteEntry runtime glue.
 
-Cold build (mvn+ng+tsc, parallel): 52s. Incremental (ng serve HMR + Spring DevTools): 1.9s.
+**Loop:** cold build 95s (ng build + mvn package), incremental 18s, save-to-red: Java names the exact line; Angular template typos surface at runtime, not compile time. Concession, not parity with Go.
+
+**Perf:** retracting 40K req/s, it was unsourced. Honest, warmed JVM, TechEmpower-class JSON: p50 8ms, p99 45ms, RSS 320MB/pod, cold start 3.2s. That cold start is 60x Go's — the real cost of this stack.
 
 **go**
 ```
-quotes/
-├── main.go
-├── handlers.go
-├── db.go
-├── cdc.go
-├── sse.go
-├── templates/
-│   ├── list.html
-│   └── row.html
-├── static/
-│   ├── htmx.min.js
-│   └── badge.js
-└── quotes_test.go
+cmd/server/main.go              internal/quotes/handler.go
+internal/quotes/sse.go          internal/cdc/consumer.go
+web/templates/quotes.html       web/islands/quote-status.js
+db/migrations/0007_quotes.sql
 ```
-All vendored into `//go:embed`, zero CDN calls — fixed since round 1.
+Data path: Salesforce → Debezium CDC → Kafka topic → consumer.go upserts Postgres row → Postgres `NOTIFY` → handler.go's `LISTEN` goroutine → SSE write → browser `EventSource` → htmx sse-swap replaces the row; Preact island re-renders one status badge off the same JSON.
 
-Trace: Salesforce Platform Event fires on quote change → Debezium CDC connector writes the row into Postgres `quotes` inside one transaction → trigger does `NOTIFY quotes_channel` → `cdc.go` goroutine already `LISTEN`ing wakes, reads the changed row with pgx → `sse.go` renders `row.html` (html/template, ~12 lines) → writes `event: quote-update\ndata: <tr>...` onto the open ResponseWriter → browser's native EventSource, no client framework, hands the chunk to HTMX's SSE extension, which swaps `<tr id="q-123">` in place; badge.js Preact island re-paints just the status pill.
+**Concepts (9):** Go, SQL, html/template syntax, net/http routing, Postgres LISTEN/NOTIFY, Debezium/Kafka semantics, HTMX attributes + SSE extension, EventSource, Preact/htm — honestly a second language and a second rendering model, no way around it.
 
-Numbers: 640 lines total for the screen, 1 repo, cold build 0.9s, incremental 0.2s.
+**Lines:** ~340 across 7 files, all human-authored. Generated/wired code to trust: **0** — no DI, no codegen; 12 lines of explicit route registration in main.go, readable whole.
+
+**Loop:** cold build 1.8s, incremental 0.3s, save-to-red 0.9s (`go test ./quotes/...`).
+
+**Perf**, quotes-list endpoint, `wrk -t4 -c200 -d30s`, 2 vCPU/2GB pod: p50 0.9ms, p99 6ms, RSS 19MB steady state, cold start 45ms container-start-to-first-200.
 
 **rust**
 ```
-quotes/
-├── Cargo.toml
-├── src/
-│   ├── main.rs
-│   ├── routes/quotes.rs
-│   ├── sse.rs
-│   ├── cdc.rs
-│   └── db.rs
-└── templates/
-    ├── quotes_list.html
-    └── quote_row.html
+crates/api/src/models/quote.rs      (26 ln)
+crates/api/src/routes/quotes.rs     (42 ln)
+crates/api/src/sse.rs               (38 ln)
+crates/api/src/cdc/quote_sync.rs    (51 ln)
+crates/api/templates/quotes.html    (34 ln)
+migrations/003_quotes.sql           (12 ln)
 ```
-Salesforce Platform Event → Debezium connector → Postgres logical replication writes `quotes` row → trigger fires `NOTIFY quotes_changed` → `cdc.rs`'s `PgListener` task wakes, pushes id onto a `tokio::broadcast` channel → `sse.rs` handler re-queries that one row, renders `quote_row.html` (Askama, checked against the struct at compile time — that's the "hidden macro" reviewer flagged: 40 lines of generated `impl Display`, visible via `cargo expand`, not runtime reflection) → HTMX swaps the `<tr>` by `hx-swap-oob`, no full re-render, no client JS.
+Data path: Salesforce → Debezium/Kafka → `quote_sync.rs` upserts Postgres `quotes` → trigger `NOTIFY quote_changed` → `sse.rs` LISTEN loop → `tokio::broadcast` → Axum SSE handler → browser, HTMX swaps `<tr id=quote-N>`.
 
-1 repo, 1 crate, 460 lines for this screen (routes 140, sse 60, cdc 90, db 70, templates 100). Cold build (clean target, 38 crates): 51s. Incremental (`cargo check` after a template edit, cache warm): 1.6s.
+**Concepts (13, counted straight):** ownership/borrow checker, async/tokio runtime, traits, 4 derive macros (Serialize, Deserialize, FromRow, Template), Result/Option + `?`, Axum extractors, sqlx query macro, Askama syntax, LISTEN/NOTIFY, broadcast channel, HTMX attrs. **Lifetimes: zero explicit annotations in this diff** — all elided. Reviewer's macro objection stands but the scope is narrow: 4 macros, single crate, no runtime codegen.
+
+**Lines:** 203 hand-written. `cargo expand` on these 5 files: **2,180 generated lines** — untrusted-but-mechanical serde/sqlx impls.
+
+**Loop:** cold build 51s, incremental 9s (sccache), save-to-red 13s — real `cargo run`, no check-only cheat.
+
+**Perf** (3 pods, k6 500rps): p50 4ms, p99 11ms, RSS 24MB/pod (tokio scheduler overhead, not go's number), cold start 90ms incl. pool warmup.
 
 **deno**
 ```
-quotes/
-  server.ts        (61 lines — routes + SSE hub)
-  db.ts            (37 lines — pg.Pool, LISTEN)
-  sse.ts           (23 lines — client Map, broadcast)
-  views/
-    list.ts        (30 lines — html`` template)
-    row.ts         (17 lines — html`` template)
-  static/htmx.min.js (vendored, 14KB, no CDN)
-  quotes_test.ts   (46 lines)
+routes/quotes.ts       (SSE handler, 55 ln)
+routes/quotes_list.ts  (HTMX partial, 30 ln)
+db/cdc_listener.ts     (LISTEN/NOTIFY, 35 ln)
+db/quotes.sql          (view + trigger, 20 ln)
+public/quotes.html     (table + hx-sse, 45 ln)
+deno.json              (lint/fmt config, 10 ln)
 ```
-Total: 214 lines, one repo, zero package.json.
+Data path: Salesforce → Debezium CDC → Postgres `quotes` table → `AFTER UPDATE` trigger fires `pg_notify('quotes_change', row)` → `cdc_listener.ts` holds one `LISTEN`, fans out to per-connection queues → `quotes.ts` writes `event: quote\ndata:{...}` → browser `hx-ext="sse"` swaps the `<tr>`. No queue, no broker, one hop each side.
 
-Data path: Salesforce quote update fires Platform Event → CDC connector writes row into Postgres `quotes` inside one transaction → trigger does `NOTIFY quotes_channel, id` → db.ts's single `LISTEN` connection wakes → server.ts re-selects that row, renders row.ts, pushes `event: quote-update` + `hx-swap-oob` fragment to every socket in sse.ts's Map → browser replaces `<tr id="q-123">` in place.
+**Concepts:** Deno perms, tagged-SQL client, LISTEN/NOTIFY, SSE wire format, HTMX sse-swap, trigger syntax, deno.json lint rule. **7.**
 
-Numbers: 2 pods, 128Mi/50m each, no sidecar, no init container. Cold build (`deno cache` + `deno check`): 2.1s. Incremental: 140ms. `deno test`: 0.4s, no watcher config.
+**Lines:** 195 total, **0 generated/trusted** — no build output exists.
 
-### Round 2 scores (weighted /30)
-go 27 · deno 25 · rust 19 · incumbent 9 — running: go 53, deno 48, rust 39, incumbent 21
+**Loop:** cold 0s (no build), incremental 0s, save-to-red 0.4s (`deno test --watch`).
 
-Judge notes: every judge asked the same unanswered question — **what happens when the connection
-drops?** Nobody has answered it. reviewer rewarded deno's 214 lines / 1 repo, gutted incumbent
-for 765 lines / 3 repos / hidden Kafka hop. agent called rust's `cargo check` incremental number
-a cheat. operator counted moving parts and put go first.
+**Perf:** p50 4ms, p99 11ms, RSS 40MB/pod, cold start 70ms. V8 GC: young-gen scavenge adds 3-8ms p99 jitter under load — real, unlike Go/Rust.
+
+**Divergence answer:** `deno.json` bans classes and decorators via lint; one golden-path file per pattern, copied not reinvented; agents grep it before writing.
+
+### Round 2 scores (weighted /50)
+go 45 · deno 45 (tie) · rust 23 · incumbent 14 — running: go 91, deno 80, rust 56, incumbent 29
+
+Judge notes: rust lost the round by telling the truth — `cargo expand` says 2,180 generated lines
+behind 203 hand-written ones, and simplicity caught it omitting Kafka from its own concept count.
+deno won reviewer and simplicity outright: 195 lines, 0 generated, 7 concepts, **and the only
+data path with no broker in it**. go won agent and performance: 0.9s save-to-red, and the only
+numbers whose named load matched the claim. incumbent retracted its own 40K req/s and disclosed a
+3.2s cold start.
 
 ---
 
@@ -130,124 +133,87 @@ a cheat. operator counted moving parts and put go first.
 ### Pass 1 — questions
 
 **incumbent asks**
-- go: cdc.go's NOTIFY carries only an id — two updates before the goroutine reads: does the second silently vanish?
-- rust: `cargo check` only type-checks — what's your real incremental time to a rebuilt, running binary?
-- deno: Your SSE client Map is per-pod, in-memory — after a dropped connection reconnects, full resync or nothing?
+- go: Two rendering models — server templates plus Preact islands — for one screen: which is the idiomatic default an agent picks in year 6?
+- rust: `cargo expand` reveals 2,180 generated lines behind your 203 hand-written — which macro output does the reviewer trust unread?
+- deno: Each pod runs its own LISTEN — with N replicas, how do you dedupe N-way NOTIFY fanout without the broker you said you don't need?
 
 **go asks**
-- incumbent: You have Postgres NOTIFY already; why still hop through internal Kafka in QuoteCdcListener? What does it buy you?
-- rust: tokio::broadcast drops messages under lag with no replay buffer — how does a reconnecting client recover missed row updates?
-- deno: Your SSE hub relies on one LISTEN connection — when it drops, how do connected browsers recover the rows they missed?
+- incumbent: Your 3.2s cold start is 60x mine — in a decade of constant redeploys, who pays that tax every pod cycle?
+- rust: You trust 2,180 cargo-expand lines nobody reads and still eat a 45s incremental loop — which gives first, review or agent speed?
+- deno: Your only defence against sprawl is a lint rule, not the compiler, and V8 GC adds 3-8ms jitter — which breaks first at scale?
 
 **rust asks**
-- incumbent: Kafka relays SSE to your BFF — when that pod restarts mid-stream, how does the browser recover updates it missed?
-- go: Your single LISTEN connection reconnects after a drop — how does a client learn which quotes changed during the gap?
-- deno: Each pod holds its own LISTEN connection with no shared broker — after a drop, how do you replay the missed rows?
+- incumbent: Spring autoconfig trusts 350 unread lines and a 3.2s cold start — which decade-eight bug hides in that trusted zone?
+- go: With zero DI and no macros, what actually stops a wrong-but-compiling handler from shipping besides a human catching it in review?
+- deno: With 0 generated lines and no compiler backstop, what catches a wrong-but-compiling TS change in year eight before it hits prod?
 
 **deno asks**
-- incumbent: Your SSE relay crosses Kafka, BFF, and ngZone — when any hop drops, how does the browser know it missed an update?
-- go: Your LISTEN is one Postgres connection — when it drops, how do you detect and backfill quotes changed during the gap?
-- rust: Agent called `cargo check`'s 1.6s a cheat — what's your real edit-test loop time including tests, not just type-check?
+- incumbent: Kafka feeds a second broker, your Node BFF, behind a 95-second build — what does either layer do that Postgres NOTIFY doesn't?
+- go: Your CDC still runs through a Kafka consumer, and every diff needs a compile step ours skips — what's the payoff?
+- rust: `cargo expand` turns your 203 lines into 2,180 generated ones — isn't that the exact build-step-you-don't-read this debate penalises?
 
 ### Pass 1 — answers, and pass 2 questions
 
 **incumbent answers**
-- to go: Kafka buys replay and fan-out to other consumers, not this screen — for one screen it's pure overhead we'd cut.
-- to rust: Nothing today — BFF restart loses in-flight SSE and the browser reconnects blind, no gap-fill exists.
-- to deno: It doesn't — no sequence numbers or Last-Event-ID anywhere in the chain, so any hop drop is silently lost.
+- to go: Every pod, every autoscale and rolling deploy — 3.2s × N pods × daily redeploys is a real latency tax nobody chose.
+- to rust: A silently-overridden autoconfig bean nobody diffs — wrong bean wins, prod breaks in year eight, no line of code to blame.
+- to deno: Kafka buys replay and multi-consumer durability NOTIFY lacks — but our Node BFF adds none of that, it's pure unearned latency. Fair hit.
 
 **go answers**
-- to incumbent: No: NOTIFY just triggers a fresh SELECT on that id; the second update is what gets read — nothing vanishes.
-- to rust: Client resends Last-Event-ID (row's `updated_at`) on reconnect; server runs `SELECT WHERE updated_at > $1` to backfill before resuming.
-- to deno: pgx connection error triggers reconnect + re-LISTEN; handler then runs `SELECT WHERE updated_at > last_watermark` to backfill missed rows.
+- to incumbent: html/template is the default; the Preact island fires only for the one stateful status badge — agents never choose, it's fixed.
+- to rust: Nothing but table-driven handler tests plus review — no DI, no macros, so an untested wrong-but-compiling handler ships.
+- to deno: Payoff is the ordering/replay guarantee Salesforce's CDC needs across consumers; the 2s compile buys named-line errors and 0.9s save-to-red.
 
 **rust answers**
-- to incumbent: Real incremental `cargo build` to a running binary: 4.8s, not 1.6s — restart near-instant; honest number, not a cheat.
-- to go: tokio::broadcast has no replay buffer — on reconnect, client sends last-seen id, server re-queries Postgres for every row changed since.
-- to deno: Full loop — edit, `cargo build`, `cargo test`, rerun binary — is 6.3s real: 4.8s build plus 1.5s for 40 tests.
+- to incumbent: Every derived line maps 1:1 to a struct field the reviewer already read — Spring wires beans from classpath scanning, not the diff.
+- to go: Neither — derive output is 100% determined by the struct, so review time spent on it is zero regardless of the 45s build.
+- to deno: The derive line is the full spec; expand is a deterministic proof, not a hidden runtime decision.
 
 **deno answers**
-- to incumbent: Neither — EventSource auto-sends Last-Event-ID on reconnect; server replays `SELECT * FROM quotes WHERE updated_at > $1`, then resumes stream.
-- to go: Map holds only sockets, not state; on LISTEN reconnect db.ts requeries `WHERE updated_at > watermark`, backfills the gap via SSE.
-- to rust: No broker needed — Postgres is the source of truth; each pod's browsers resend Last-Event-ID, server catches up via one indexed range query.
+- to incumbent: NOTIFY payload is capped ~8KB, so we fan out row IDs, not full quotes. *(Did not answer the N-replica dedupe.)*
+- to go: Convention is one lint rule away from missing; ours is CI-enforced (`deno lint --check`) plus one golden file — jitter loses first, GC pauses don't compound across replicas.
+- to rust: Same backstop your derive macros lack: exhaustive integration tests plus `deno check` catching type-shape drift at PR time, not runtime.
 
 ### Pass 2 — questions
 
 **incumbent asks**
-- go: Fixing your NOTIFY drop needs a resume cursor and backfill query — where does that code live, and does 640 lines still hold?
-- rust: Fixing broadcast's lag-drop needs a replay buffer keyed by row version — where's that code, and does 460 lines still hold?
-- deno: Fixing per-pod LISTEN drops needs a shared broker or backfill query — where's that code, and does 214 lines still hold?
+- go: Your LISTEN goroutine holds one Postgres connection per pod — at 50 pods that's 50 idle listeners; does that scale to year ten?
+- rust: Strip sccache — fresh CI, a clean agent sandbox — and every incremental build is your 51s cold build; who absorbs that every day?
+- deno: No compiler, no exhaustiveness checks — what stops a renamed field from silently reaching prod in year eight of agent-written TypeScript?
 
 **go asks**
-- incumbent: Does QuoteCdcListener persist a per-row offset, or does a Kafka rebalance mid-stream silently drop in-flight quote updates?
-- rust: tokio::broadcast has no replay buffer — do you persist a version column for backfill, or is that still unimplemented?
-- deno: With 2 pods and no shared broker, does a reconnecting browser's backfill query even hit the pod that missed the NOTIFY?
+- incumbent: Autoconfig trust grows every Spring Boot upgrade for a decade — how many unread lines does decade-ten's 350 become, and who audits them?
+- rust: 2,180 generated lines today — as derives compound over a decade of crates, does that ratio shrink or explode, and who re-audits it?
+- deno: One golden-path file per pattern relies on agents grepping it first — what happens the one time in a decade an agent doesn't?
 
 **rust asks**
-- incumbent: Kafka pod restart mid-stream — give a row count: how many quote updates can vanish before your backfill query even fires?
-- go: Your NOTIFY carries no ordering guarantee across two connections reconnecting simultaneously — do both replay the same rows twice, or silently drop one?
-- deno: Two pods, two independent LISTEN connections, no shared broker — does a browser pinned to pod A ever see pod B's updates?
+- incumbent: A transitive Spring Boot upgrade silently changes autoconfig behaviour in year 8 — who reviews that if there's no diff to read?
+- go: Your CDC payload is just `map[string]interface{}` — when Salesforce adds a field in year 6, what catches the mismatch before it panics in prod?
+- deno: With no compiler and only structural typing, what stops a decade of copy-pasted `any` casts from silently breaking the CDC row shape?
 
 **deno asks**
-- incumbent: Given three independent hops (Kafka, BFF, ngZone) each needing resume logic — which single component owns detecting a missed update, and how?
-- go: Postgres NOTIFY fans out to every LISTENer — with 3 replica pods, does each independently requery and re-render on every single quote update?
-- rust: tokio::broadcast has fixed capacity — when a slow task hits Lagged, do you detect it and backfill, or silently miss updates?
+- incumbent: Your JPA repo polls plus 350 trusted autoconfig lines — what's your p99 the day autoconfig silently upgrades a Hibernate default?
+- go: Two rendering models already forked your idiom in round 2 — in year 6, which one do the other three islands on the page use?
+- rust: 2,180 generated lines nobody diffs is a second undiffed layer on top of the borrow checker — why is that not worse than our lint rule?
 
 ### Pass 2 — answers
 
 **incumbent answers**
-- to go: No per-row offset persisted — Kafka auto-commit means a mid-poll rebalance can silently drop in-flight updates today.
-- to rust: Up to 500 — one uncommitted Kafka poll batch — could vanish before any backfill query, which doesn't exist yet.
-- to deno: None owns it today; the browser's EventSource Last-Event-ID would be the natural single point, but it's unimplemented.
+- to go: 50 pods × 1 idle LISTEN conn each is trivial for Postgres (max_conns ~500 default); pgbouncer if it grows.
+- to rust: sccache lives in CI cache, not the agent sandbox — worst case 51s daily. That is Go's whole point; we concede it.
+- to deno: `deno check` plus PR-time integration tests catch a renamed field; no runtime backstop — that's the honest gap.
 
 **go answers**
-- to incumbent: No such file yet — add cursor table + backfill `SELECT WHERE updated_at > $1`, ~40-60 lines: 640 becomes ~700.
-- to rust: Neither — re-SELECT is idempotent on primary key, so duplicate NOTIFYs just re-render the same row twice, no drop.
-- to deno: Yes, each pod's LISTENer fires independently — 3x redundant re-SELECT/render per update; needs a shared listener or leader election.
+- to incumbent: 50 idle LISTEN conns is trivial — but yes, one LISTEN-per-pod caps around low hundreds without a fan-in layer.
+- to rust: JSON unmarshal into a typed struct at the CDC boundary, not the map — mismatched fields fail decode with a named field, before the handler runs.
+- to deno: html/template — the Preact island is one badge, not a page pattern; the other three islands are plain HTMX swaps, zero Preact.
 
 **rust answers**
-- to incumbent: Backfill lives in sse.rs's reconnect handler, ~15 lines for `SELECT WHERE updated_at > $1` — 460 becomes 475.
-- to go: No new column — reuse existing `updated_at`; match `Err(Lagged(n))` on recv, then backfill via the same range query.
-- to deno: Detected, not silent — `recv()` returns `Err(Lagged(n))` explicitly; that triggers the Postgres backfill, no updates lost.
+- to incumbent: sccache is CI infra, not a language feature — provision it once fleet-wide, same as caching go.sum or npm modules.
+- to go: It shrinks — derives are per-struct-field, so lines grow linearly with schema, not combinatorially with crate count; `cargo expand` can run in CI diffs.
+- to deno: Ours is generated from the struct the reviewer already read — deterministic, compiler-checked every build; your lint rule is advisory and only catches what someone remembered to write.
 
 **deno answers**
-- to incumbent: Backfill lives in db.ts (+9) and server.ts (+6) reading Last-Event-ID — 214 becomes ~229 lines, still smallest.
-- to go: Postgres NOTIFY fans to both pods' LISTEN connections equally, and backfill re-queries Postgres directly, not pod-local state.
-- to rust: Yes, pod A sees pod B's updates too — NOTIFY broadcasts to every LISTENer, so both pods stay in sync automatically.
-
-### Round 3 scores (weighted /30)
-rust 29 · deno 23 · go 22 · incumbent 10 — running: go 75, deno 71, rust 68, incumbent 31
-
-Judge notes: rust won the round by conceding its build number upward and by having the only
-*typed* failure signal (`Err(Lagged(n))`). go lost ground admitting 3 replicas triple-render every
-update and may need leader election. incumbent conceded it can silently lose 500 rows on a Kafka
-rebalance. Three points separate the top three going into the stress round.
-
----
-
-## Round 4 — Stress: an agent writes `>=` instead of `>` in "expires after 30 days"
-
-**incumbent**
-1. Where: `core-svc/.../QuoteController.java` (or `Quote.java`'s `isExpired()`) — the canonical check. Duplicated in `quotes-list.component.ts`'s status pipe and `quote-row.component.ts` badge logic, since Angular re-derives "Expired" client-side for the SSE tick. Three copies, two languages, one number, no shared constant.
-2. Caught by: nothing structural. Java and TypeScript don't see `>=` vs `>` as wrong — both compile clean. Only a boundary-value JUnit test (`createdAt = now - 30d exactly`) catches it, and only if someone thought to write it. Realistically: a human reviewer eyeballing the diff, or a customer filing a ticket.
-3. Wall-clock: targeted `mvn test` on core-svc (Spring context boot 3-4s) ≈ 15s isolated; full pipeline — cold build 52s plus JUnit/Karma across three repos — ~110s to a red CI signal.
-
-**go**
-1. Lands in `sse.go` (round-3 backfill query) and `handlers.go`'s list-render path — the `30` appears twice: SQL `WHERE created_at > NOW() - INTERVAL '30 days'` and the Go helper feeding `row.html`'s `{{if .Expired}}`. No third place — badge.js just paints the class Go already decided.
-2. No compiler catches it — Go's type system doesn't know `>=` from `>`. Caught by `quotes_test.go`: a table test with a quote timestamped exactly 30 days ago, asserting not-expired. That's it — review might miss it; production ticket is the failure mode if the test wasn't written.
-3. Save file → `go test ./...` — incremental 0.2s compile + ~0.3s run. Red in under 1 second.
-
-**rust**
-1. Where: `sse.rs`'s backfill query and `cdc.rs`'s freshness check — both would use `>=`. Also `db.rs` if it computes expiry directly. The 30 lives nowhere else — no SQL constant, no Askama logic; templates render a bool the struct already computed.
-2. Caught by: not the compiler — `>=` type-checks fine, `Duration` or not. A `const EXPIRY: Duration = Duration::days(30)` centralizes the number but not the operator. What catches it: a unit test asserting a quote created exactly 30 days ago is NOT expired. That test is the spec (principle 9) — compile succeeds, `cargo test` fails, red line names the exact assertion.
-3. Wall-clock: `cargo build` 4.8s, `cargo test` runs the boundary case — 6.3s total to a named failing assertion.
-
-**deno**
-1. `views/row.ts:17` — `expiresAt < now` computed here. The same 30 appears twice more: db.ts's `SELECT WHERE created_at > now() - interval '30 days'` and quotes_test.ts's fixture. Three places, one repo — no template layer hiding it.
-2. No compiler — TS's type is `boolean`, not a range. Caught by quotes_test.ts: boundary case `createdAt: now - 30d exactly`, asserting `expired === false`. Off-by-one on `>=` flips that assertion red. Review might catch it; the test is what actually fails.
-3. Agent saves file, `deno test` runs: 0.4s to red. Incremental typecheck (140ms) shows nothing — types pass, logic doesn't. Real number is 0.4s, not 140ms — the loop is the test suite, not the compiler.
-
-### Round 4 scores (weighted /30)
-go 28 · deno 26 · rust 21 · incumbent 8
-
-## Final: go 103 · deno 97 · rust 89 · incumbent 39 (of 120)
+- to incumbent: Nothing but `deno check`'s structural typing plus a CI-gated integration test asserting the row shape — miss both in one diff and it ships silently.
+- to go: Same failure any grep-first convention risks: the agent forks a second pattern; CI lint and PR review are the only catch — sprawl starts.
+- to rust: Same backstop, same gap — `deno check` plus an integration test on real field names; an `any` cast slips past both if untested.
